@@ -75,10 +75,8 @@ bool init_gpu(int thr_id, CoinAlgo algo, Type type, Version version, Argon2Param
 			auto &device = devices[i];
 
 			argon2_gpu_hasher_thread *argon2_gpu_hasher_thread_data = (argon2_gpu_hasher_thread *)malloc(sizeof(argon2_gpu_hasher_thread));
-			if(algo == Crds || algo == Dyn || algo == Arg || algo == Urx || algo == Adot) {
-				argon2_gpu_hasher_thread_data->vhash = (uint32_t *) malloc(gpu_batch_size * 8 * sizeof(uint32_t));
-				argon2_gpu_hasher_thread_data->endiandata = (uint32_t *) malloc(20 * sizeof(uint32_t));
-			}
+			argon2_gpu_hasher_thread_data->vhash = (uint32_t *) malloc(gpu_batch_size * 8 * sizeof(uint32_t));
+			argon2_gpu_hasher_thread_data->endiandata = (uint32_t *) malloc(20 * sizeof(uint32_t));
 			argon2_gpu_hasher_thread_data->processing_unit = NULL;
 
 			ProgramContext *progCtx = new ProgramContext(context, {device}, type, version);
@@ -124,54 +122,9 @@ void gpu_argon2_raw_hash(argon2_gpu_hasher_thread *thread_data) {
 		gpu_argon2_raw_hash_gate<opencl::ProcessingUnit>(thread_data);
 }
 
-bool init_thread_argon2d(int thr_id, argon2::CoinAlgo algo, argon2::Type type, argon2::Version version, Argon2Params *params) {
-	if(use_gpu[0] == 'C') {
-		try {
-			if(!init_gpu<cuda::GlobalContext, cuda::ProgramContext, cuda::ProcessingUnit>(thr_id, algo, type, version, params)) {
-				return false;
-			}
-		} catch (cuda::CudaException &err) {
-			std::cerr << "CUDA ERROR: " << err.what() << std::endl;
-			return false;
-		}
-	}
-	else {
-		try {
-			if(!init_gpu<opencl::GlobalContext, opencl::ProgramContext, opencl::ProcessingUnit>(thr_id, algo, type, version, params)) {
-				return false;
-			}
-		} catch (cl::Error &err) {
-			std::cerr << ": OpenCL ERROR: " << err.err() << ": "
-					  << err.what() << std::endl;
-			return false;
-		}
-	}
-	return true;
-}
-
-bool init_thread_argon2d16000_gpu(int thr_id) {
-	return init_thread_argon2d(thr_id, Adot, ARGON2_D, ARGON2_VERSION_10, new Argon2Params(32, nullptr, 0, nullptr, 0, nullptr, 0, 1, 16000, 1));
-}
-
-bool init_thread_argon2d4096_gpu(int thr_id) {
-	return init_thread_argon2d(thr_id, Arg, ARGON2_D, ARGON2_VERSION_13, new Argon2Params(32, nullptr, 0, nullptr, 0, nullptr, 0, 1, 4096, 1));
-}
-
-bool init_thread_argon2d_dyn_gpu(int thr_id) {
-	return init_thread_argon2d(thr_id, Dyn, ARGON2_D, ARGON2_VERSION_10, new Argon2Params(32, nullptr, 0, nullptr, 0, nullptr, 0, 2, 500, 8));
-}
-
-bool init_thread_argon2d_crds_gpu(int thr_id) {
-	return init_thread_argon2d(thr_id, Crds, ARGON2_D, ARGON2_VERSION_10, new Argon2Params(32, nullptr, 0, nullptr, 0, nullptr, 0, 1, 250, 4));
-}
-
-bool init_thread_argon2ad_urx_gpu_proxy(int thr_id, uint8_t *secret_ptr, size_t secret_sz, uint8_t *ad_ptr, size_t ad_sz) {
-	return init_thread_argon2d(thr_id, Urx, ARGON2_D, ARGON2_VERSION_13, new Argon2Params(32, nullptr, 0, secret_ptr, secret_sz, ad_ptr, ad_sz, 1, 512, 2));
-}
-
 bool init_thread_argon2id1024_gpu( int thr_id )
 {
-    return init_thread_argon2d(
+    return init_gpu<cuda::GlobalContext, cuda::ProgramContext, cuda::ProcessingUnit>(
         thr_id, Bweb,
         ARGON2_ID,
         ARGON2_VERSION_13,

@@ -1258,104 +1258,6 @@ void argon2_genseed_generic(__local uint *initHash, __global uint *seed, int job
     }
 }
 
-void argon2_genseed_crds_dyn_arg(__local uint *initHash, __global uint *seed,
-                                 int lanes, int m_cost, int t_cost, int version, int job_id, int thr_id) {
-    __local ulong *h = (__local ulong *)&initHash[20];
-    __local ulong *shfl = &h[10];
-    __local uint *buf = (__local uint *)&shfl[16];
-    __local uint *value = &buf[32];
-
-    for (int i = 0; i < 5; i++) {
-        initHash[i * 4 + thr_id] = seed[i * 4 + thr_id];
-    }
-
-    if (thr_id == 3) {
-        uint x = seed[19] + job_id;
-        __local uchar *p = (__local uchar *)&initHash[19];
-        p[3] = x & 0xff;
-        p[2] = (x >> 8) & 0xff;
-        p[1] = (x >> 16) & 0xff;
-        p[0] = (x >> 24) & 0xff;
-    }
-
-    int buf_len = blake2b_init(h, ARGON2_PREHASH_DIGEST_LENGTH, thr_id);
-    *value = lanes; //lanes
-    buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-    *value = 32; //outlen
-    buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-    *value = m_cost; //m_cost
-    buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-    *value = t_cost; //t_cost
-    buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-    *value = version; //version
-    buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-    *value = ARGON2_D; //type
-    buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-    *value = 80; //pw_len
-    buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-    buf_len = blake2b_update_local(initHash, 20, h, buf, buf_len, shfl, thr_id);
-    *value = 80; //salt_len
-    buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-    buf_len = blake2b_update_local(initHash, 20, h, buf, buf_len, shfl, thr_id);
-    *value = 0; //secret_len
-    buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-    buf_len = blake2b_update_local(0, 0, h, buf, buf_len, shfl, thr_id);
-    *value = 0; //ad_len
-    buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-    buf_len = blake2b_update_local(0, 0, h, buf, buf_len, shfl, thr_id);
-
-    blake2b_final_local(initHash, ARGON2_PREHASH_DIGEST_LENGTH, h, buf, buf_len, shfl, thr_id);
-}
-
-void argon2_genseed_urx(__local uint *initHash, __global uint *seed, __global uint *secret, uint secretLen, __global uint *ad, uint adLen,
-								 int lanes, int m_cost, int t_cost, int version, int job_id, int thr_id) {
-	__local ulong *h = (__local ulong *)&initHash[20];
-	__local ulong *shfl = &h[10];
-	__local uint *buf = (__local uint *)&shfl[16];
-	__local uint *value = &buf[32];
-
-	for (int i = 0; i < 5; i++) {
-		initHash[i * 4 + thr_id] = seed[i * 4 + thr_id];
-	}
-
-	if (thr_id == 3) {
-		uint x = seed[19] + job_id;
-		__local uchar *p = (__local uchar *)&initHash[19];
-		p[3] = x & 0xff;
-		p[2] = (x >> 8) & 0xff;
-		p[1] = (x >> 16) & 0xff;
-		p[0] = (x >> 24) & 0xff;
-	}
-
-	int buf_len = blake2b_init(h, ARGON2_PREHASH_DIGEST_LENGTH, thr_id);
-	*value = lanes; //lanes
-	buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-	*value = 32; //outlen
-	buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-	*value = m_cost; //m_cost
-	buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-	*value = t_cost; //t_cost
-	buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-	*value = version; //version
-	buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-	*value = ARGON2_D; //type
-	buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-	*value = 40; //pw_len
-	buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-	buf_len = blake2b_update_local(initHash, 10, h, buf, buf_len, shfl, thr_id);
-	*value = 40; //salt_len
-	buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-	buf_len = blake2b_update_local(&initHash[10], 10, h, buf, buf_len, shfl, thr_id);
-	*value = secretLen; //secret_len
-	buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-	buf_len = blake2b_update_global(secret, secretLen / 4, h, buf, buf_len, shfl, thr_id);
-	*value = adLen; //ad_len
-	buf_len = blake2b_update_local(value, 1, h, buf, buf_len, shfl, thr_id);
-	buf_len = blake2b_update_global(ad, adLen / 4, h, buf, buf_len, shfl, thr_id);
-
-	blake2b_final_local(initHash, ARGON2_PREHASH_DIGEST_LENGTH, h, buf, buf_len, shfl, thr_id);
-}
-
 __kernel void argon2_kernel_preseed(uint algo,
         __global struct block_g *memory, __global uint *seed, uint lanes, uint segment_blocks,
 		__global uint *secret, uint secretLen, __global uint *ad, uint adLen,
@@ -1368,18 +1270,11 @@ __kernel void argon2_kernel_preseed(uint algo,
 
     __local uint *initHash = (__local uint *)&blake_shared[lane_thr * 60];
 
-    if(algo == 1) // Crds
-        argon2_genseed_crds_dyn_arg(initHash, seed, lanes, 250, 1, ARGON2_VERSION_10, job_id, thr_id);
-    else if(algo == 2) // Dyn
-        argon2_genseed_crds_dyn_arg(initHash, seed, lanes, 500, 2, ARGON2_VERSION_10, job_id, thr_id);
-    else if(algo == 3) // Arg
-        argon2_genseed_crds_dyn_arg(initHash, seed, lanes, 4096, 1, ARGON2_VERSION_13, job_id, thr_id);
-    else if(algo == 4) //Urx
-		    argon2_genseed_urx(initHash, seed, secret, secretLen, ad, adLen, lanes, 512, 1, ARGON2_VERSION_13, job_id, thr_id);
-		else if(algo == 5) // Adot
-		    argon2_genseed_crds_dyn_arg(initHash, seed, lanes, 16000, 1, ARGON2_VERSION_10, job_id, thr_id);				
-    else
+    if(algo == 6) { // Bweb
         argon2_genseed_generic(initHash, seed, job_id, thr_id);
+    } else {
+        argon2_genseed_generic(initHash, seed, job_id, thr_id);
+    }
 
     if (thr_id == 0) {
         initHash[ARGON2_PREHASH_DIGEST_LENGTH] = idx;

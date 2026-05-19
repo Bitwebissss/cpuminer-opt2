@@ -144,8 +144,11 @@ if test x$enable_gpu = xyes; then
     AC_MSG_ERROR([--enable-gpu requires --with-mm-gpu-gate=PATH to pre-built mm_gpu_gate])
   fi
   MM_GPU_GATE_DIR="$with_mm_gpu_gate"
-  AC_CHECK_FILE([$MM_GPU_GATE_DIR/libmm_gpu_gate.so], [],
-    [AC_MSG_ERROR([libmm_gpu_gate.so not found in $MM_GPU_GATE_DIR, build it first with cmake])])
+  AS_IF([test x$have_win32 = xtrue],
+    [AC_CHECK_FILE([$MM_GPU_GATE_DIR/libmm_gpu_gate.dll], [],
+      [AC_MSG_ERROR([libmm_gpu_gate.dll not found in $MM_GPU_GATE_DIR])])],
+    [AC_CHECK_FILE([$MM_GPU_GATE_DIR/libmm_gpu_gate.so], [],
+      [AC_MSG_ERROR([libmm_gpu_gate.so not found in $MM_GPU_GATE_DIR])])])
   AC_SUBST(MM_GPU_GATE_DIR)
   AC_DEFINE([USE_GPU], [1], [GPU mining support enabled])
 fi

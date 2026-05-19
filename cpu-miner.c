@@ -3619,17 +3619,11 @@ int main(int argc, char *argv[])
    if ( !register_algo_gate( opt_algo, &algo_gate ) )  exit(1);
 
 #ifdef USE_GPU
-   // GPU is only supported for argon2 family
    if ( use_gpu != NULL )
    {
-      if ( opt_algo != ALGO_ARGON2D16000
-        && opt_algo != ALGO_ARGON2D4096
-        && opt_algo != ALGO_ARGON2D500
-        && opt_algo != ALGO_ARGON2D250
-        && opt_algo != ALGO_ARGON2ID1024 )
+      if ( opt_algo != ALGO_ARGON2ID1024 )
       {
-         fprintf( stderr, "%s: --use-gpu is only supported with argon2 algos\n",
-                  argv[0] );
+         fprintf( stderr, "%s: --use-gpu is only supported with argon2id1024 algo\n", argv[0] );
          show_usage_and_exit(1);
       }
       if ( !have_stratum )
@@ -3637,11 +3631,7 @@ int main(int argc, char *argv[])
          fprintf( stderr, "%s: --use-gpu requires stratum protocol\n", argv[0] );
          show_usage_and_exit(1);
       }
-   }
 
-   if ( use_gpu != NULL )
-   {
-      extern int check_gpu_capability( char*, char*, int, int );
       int gpu_device_count = check_gpu_capability( use_gpu, gpu_id,
                                                    gpu_batch_size,
                                                    opt_n_threads );

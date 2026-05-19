@@ -247,7 +247,6 @@ void argon2id1024_hash( void *output, const void *input )
                 rc, argon2_error_message( rc ) );
 }
 
-
 #ifdef USE_GPU
 #include "gpu_gate/argon2d-gpu-gate.h"
 
@@ -269,6 +268,7 @@ int scanhash_argon2id1024_gpu( struct work *work, uint32_t max_nonce,
     uint32_t n = first_nonce;
 
     v128_bswap32_80( td->endiandata, pdata );
+
     do {
         td->endiandata[19] = n;
         gpu_argon2_raw_hash( td );
@@ -290,7 +290,7 @@ int scanhash_argon2id1024_gpu( struct work *work, uint32_t max_nonce,
     pdata[19] = n;
     return 0;
 }
-#endif
+#endif  // USE_GPU
 
 bool register_argon2id1024_algo( algo_gate_t *gate )
 {

@@ -22,17 +22,10 @@ enum Version {
 };
 
 enum CoinAlgo {
-	None = 0,
-	Crds = 1,
-	Dyn = 2,
-	Arg = 3,
-	Urx = 4,
-    Adot = 5,
+    None = 0,
     Bweb = 6
 };
 
 } // namespace argon2
 
-
-#endif // ARGON2COMMON_H
-
+#endif

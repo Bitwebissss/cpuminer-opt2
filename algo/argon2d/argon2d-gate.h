@@ -33,8 +33,6 @@ int scanhash_argon2d4096( struct work *work, uint32_t max_nonce,
                     uint64_t *hashes_done, struct thr_info *mythr );
 
 // Bitweb: argon2id, version = 0x13, t=3, m=1024, p=1.
-// Parameters are consensus-critical and must match GetArgon2idPoWHash()
-// in block.cpp exactly.
 bool register_argon2id1024_algo( algo_gate_t* gate );
 
 void argon2id1024_hash( void *state, const void *input );
@@ -42,6 +40,7 @@ void argon2id1024_hash( void *state, const void *input );
 #ifdef USE_GPU
 extern char *use_gpu;
 extern int   gpu_batch_size;
+
 bool init_thread_argon2id1024( int thr_id );
 int  scanhash_argon2id1024_gpu( struct work *work, uint32_t max_nonce,
                                  uint64_t *hashes_done,
