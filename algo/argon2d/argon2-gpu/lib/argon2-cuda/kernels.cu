@@ -866,53 +866,7 @@ __device__ __forceinline__ void argon2_genseed_generic(uint32_t *initHash, uint3
 	}
 }
 
-__device__ __forceinline__ void argon2_genseed_crds_dyn_arg(uint32_t *initHash, uint32_t *seed,
-		int lanes, int m_cost, int t_cost, int version, int job_id, int thr_id) {
-	uint64_t *h = (uint64_t*)&initHash[20];
-	uint32_t *buf = (uint32_t*)&h[10];
-	uint32_t *value = &buf[32];
-
-	for (int i = 0; i < 5; i++) {
-		initHash[i * 4 + thr_id] = seed[i * 4 + thr_id];
-	}
-
-	if (thr_id == 3) {
-		uint32_t x = seed[19] + job_id;
-		uint8_t *p = (uint8_t *) &initHash[19];
-		p[3] = x & 0xff;
-		p[2] = (x >> 8) & 0xff;
-		p[1] = (x >> 16) & 0xff;
-		p[0] = (x >> 24) & 0xff;
-	}
-
-	int buf_len = blake2b_init(h, ARGON2_PREHASH_DIGEST_LENGTH, thr_id);
-	*value = lanes; //lanes
-	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-	*value = 32; //outlen
-	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-	*value = m_cost; //m_cost
-	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-	*value = t_cost; //t_cost
-	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-	*value = version; //version
-	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-	*value = ARGON2_D; //type
-	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-	*value = 80; //pw_len
-	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-	buf_len = blake2b_update(initHash, 20, h, buf, buf_len, thr_id);
-	*value = 80; //salt_len
-	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-	buf_len = blake2b_update(initHash, 20, h, buf, buf_len, thr_id);
-	*value = 0; //secret_len
-	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-	buf_len = blake2b_update(NULL, 0, h, buf, buf_len, thr_id);
-	*value = 0; //ad_len
-	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-	buf_len = blake2b_update(NULL, 0, h, buf, buf_len, thr_id);
-
-	blake2b_final(initHash, ARGON2_PREHASH_DIGEST_LENGTH, h, buf, buf_len, thr_id);
-}
+/* argon2_genseed_crds_dyn_arg removed: Credits/Dynamic/Arg/Adot algos not supported */
 
 __device__ __forceinline__ void argon2_genseed_bweb(uint32_t *initHash, uint32_t *seed,
 		int lanes, int m_cost, int t_cost, int version, int job_id, int thr_id) {
@@ -924,13 +878,10 @@ __device__ __forceinline__ void argon2_genseed_bweb(uint32_t *initHash, uint32_t
 		initHash[i * 4 + thr_id] = seed[i * 4 + thr_id];
 	}
 
+	/* FIX: write nonce as native uint32_t to match CPU path (v128_bswap32_80 + direct).
+	 * Old bswap32 code was for legacy be32enc scanhash — caused GPU hash != CPU hash. */
 	if (thr_id == 3) {
-		uint32_t x = seed[19] + job_id;
-		uint8_t *p = (uint8_t *) &initHash[19];
-		p[3] = x & 0xff;
-		p[2] = (x >> 8) & 0xff;
-		p[1] = (x >> 16) & 0xff;
-		p[0] = (x >> 24) & 0xff;
+		initHash[19] = seed[19] + job_id;
 	}
 
 	int buf_len = blake2b_init(h, ARGON2_PREHASH_DIGEST_LENGTH, thr_id);
@@ -944,7 +895,7 @@ __device__ __forceinline__ void argon2_genseed_bweb(uint32_t *initHash, uint32_t
 	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
 	*value = version; //version
 	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-	*value = ARGON2_ID; //type  ← argon2id = 2, not ARGON2_D = 0
+	*value = ARGON2_ID; //type = 2 (argon2id)
 	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
 	*value = 80; //pw_len
 	buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
@@ -962,53 +913,7 @@ __device__ __forceinline__ void argon2_genseed_bweb(uint32_t *initHash, uint32_t
 	blake2b_final(initHash, ARGON2_PREHASH_DIGEST_LENGTH, h, buf, buf_len, thr_id);
 }
 
-__device__ __forceinline__ void argon2_genseed_urx(uint32_t *initHash, uint32_t *seed, uint32_t *secret, uint32_t secretLen, uint32_t *ad, uint32_t adLen,
-                                                            int lanes, int m_cost, int t_cost, int version, int job_id, int thr_id) {
-    uint64_t *h = (uint64_t*)&initHash[20];
-    uint32_t *buf = (uint32_t*)&h[10];
-    uint32_t *value = &buf[32];
-
-    for (int i = 0; i < 5; i++) {
-        initHash[i * 4 + thr_id] = seed[i * 4 + thr_id];
-    }
-
-    if (thr_id == 3) {
-        uint32_t x = seed[19] + job_id;
-        uint8_t *p = (uint8_t *) &initHash[19];
-        p[3] = x & 0xff;
-        p[2] = (x >> 8) & 0xff;
-        p[1] = (x >> 16) & 0xff;
-        p[0] = (x >> 24) & 0xff;
-    }
-
-    int buf_len = blake2b_init(h, ARGON2_PREHASH_DIGEST_LENGTH, thr_id);
-    *value = lanes; //lanes
-    buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-    *value = 32; //outlen
-    buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-    *value = m_cost; //m_cost
-    buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-    *value = t_cost; //t_cost
-    buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-    *value = version; //version
-    buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-    *value = ARGON2_D; //type
-    buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-    *value = 40; //pw_len
-    buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-    buf_len = blake2b_update(initHash, 10, h, buf, buf_len, thr_id);
-    *value = 40; //salt_len
-    buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-    buf_len = blake2b_update(&initHash[10], 10, h, buf, buf_len, thr_id);
-    *value = secretLen; //secret_len
-    buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-    buf_len = blake2b_update(secret, secretLen / 4, h, buf, buf_len, thr_id);
-    *value = adLen; //ad_len
-    buf_len = blake2b_update(value, 1, h, buf, buf_len, thr_id);
-    buf_len = blake2b_update(ad, adLen / 4, h, buf, buf_len, thr_id);
-
-    blake2b_final(initHash, ARGON2_PREHASH_DIGEST_LENGTH, h, buf, buf_len, thr_id);
-}
+/* argon2_genseed_urx removed: Uran algo not supported */
 
 __global__ void argon2_kernel_preseed(
 		uint32_t algo, struct block_g *memory, uint32_t *seed, uint32_t lanes, uint32_t segment_blocks,
@@ -1023,20 +928,10 @@ __global__ void argon2_kernel_preseed(
 
     uint32_t *initHash = &shared[lane_thr * 88];
 
-    if(algo == 1) // Crds
-		argon2_genseed_crds_dyn_arg(initHash, seed, lanes, 250, 1, ARGON2_VERSION_10, job_id, thr_id);
-    else if(algo == 2) // Dyn
-		argon2_genseed_crds_dyn_arg(initHash, seed, lanes, 500, 2, ARGON2_VERSION_10, job_id, thr_id);
-    else if(algo == 3) // Arg
-		argon2_genseed_crds_dyn_arg(initHash, seed, lanes, 4096, 1, ARGON2_VERSION_13, job_id, thr_id);
-    else if(algo == 4) //Urx
-    argon2_genseed_urx(initHash, seed, secret, secretLen, ad, adLen, lanes, 512, 1, ARGON2_VERSION_13, job_id, thr_id);
-    else if(algo == 5) // Adot
-    argon2_genseed_crds_dyn_arg(initHash, seed, lanes, 16000, 1, ARGON2_VERSION_10, job_id, thr_id);
-    else if(algo == 6) // Bweb (argon2id: t=3, m=1024, p=1, version=0x13)
-    argon2_genseed_bweb(initHash, seed, lanes, 1024, 3, ARGON2_VERSION_13, job_id, thr_id);
+    if(algo == 6) // Bweb (argon2id: t=3, m=1024, p=1, version=0x13)
+        argon2_genseed_bweb(initHash, seed, lanes, 1024, 3, ARGON2_VERSION_13, job_id, thr_id);
     else
-		argon2_genseed_generic(initHash, seed, job_id, thr_id);
+        argon2_genseed_generic(initHash, seed, job_id, thr_id);
 
 	if (thr_id == 0) {
 		initHash[ARGON2_PREHASH_DIGEST_LENGTH] = idx;
