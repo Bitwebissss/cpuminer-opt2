@@ -1,0 +1,15 @@
+Windows compile instructions.
+
+Ubuntu 24.xx
+
+apt get update
+
+apt get upgrade
+
+sudo apt install build-essential automake autoconf libtool pkg-config wget git curl zip unzip libssl-dev libgmp-dev libcurl4-openssl-dev libjansson-dev mingw-w64 libz-mingw-w64-dev
+
+run ./winbuild-cross-full.sh
+
+or use 
+
+https://github.com/JayDDee/cpuminer-opt/wiki/Compiling-from-source
