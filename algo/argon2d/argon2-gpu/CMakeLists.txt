@@ -17,8 +17,13 @@ endif()
 if(CUDA_FOUND)
     message(STATUS "Using CUDA version ${CUDA_VERSION}")
     add_definitions(-DHAVE_CUDA=1)
-    set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
-        -std=c++17 --compiler-options=-fPIC -O3 --ptxas-options=-v -lineinfo)
+    if(MSVC OR WIN32)
+        set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
+            -std=c++14 -O3 --ptxas-options=-v -lineinfo)
+    else()
+        set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
+            -std=c++14 --compiler-options=-fPIC -O3 --ptxas-options=-v -lineinfo)
+    endif()
 else()
     message(STATUS "Building without CUDA support")
     add_definitions(-DHAVE_CUDA=0)

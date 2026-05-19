@@ -41,6 +41,10 @@
 #include "sysinfos.c"
 #include "algo/sha/sha256d.h"
 
+#ifdef USE_GPU
+#include "gpu_detection.h"
+#endif
+
 #ifdef WIN32
 #include <winsock2.h>
 #include <windows.h>
