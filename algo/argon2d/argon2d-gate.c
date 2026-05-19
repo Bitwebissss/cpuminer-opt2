@@ -248,7 +248,7 @@ void argon2id1024_hash( void *output, const void *input )
 }
 
 #ifdef USE_GPU
-#include "gpu_gate/argon2d-gpu-gate.h"
+#include "argon2d-gpu-gate.h"
 
 bool init_thread_argon2id1024( int thr_id )
 {

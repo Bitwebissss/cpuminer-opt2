@@ -137,7 +137,7 @@ AC_ARG_ENABLE([gpu],
 
 AC_ARG_WITH([mm-gpu-gate],
   AS_HELP_STRING([--with-mm-gpu-gate=PATH],
-    [directory containing libmm_gpu_gate.so (build it first with cmake in algo/argon2d/gpu_gate/)]))
+    [directory containing libmm_gpu_gate.so (build it first with cmake in algo/argon2d/argon2-gpu/)]))
 
 if test x$enable_gpu = xyes; then
   if test -z "$with_mm_gpu_gate"; then

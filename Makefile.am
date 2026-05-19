@@ -31,10 +31,6 @@ SUBDIRS = compat
 
 ALL_INCLUDES = @PTHREAD_FLAGS@ -fno-strict-aliasing $(EXTRA_INCLUDES) -I.
 
-if WANT_GPU
-  ALL_INCLUDES += -I$(top_srcdir)/algo/argon2d/gpu_gate
-endif
-
 bin_PROGRAMS = cpuminer
 
 dist_man_MANS = cpuminer.1
@@ -314,10 +310,9 @@ endif
 cpuminer_LDFLAGS = @LDFLAGS@
 cpuminer_LDADD	= $(EXTRA_LIBS) @LIBCURL@ -ljansson @PTHREAD_LIBS@ @WS2_LIBS@ -lgmp
 if WANT_GPU
-if HAVE_WINDOWS
-  cpuminer_LDADD += -L@MM_GPU_GATE_DIR@ -lmm_gpu_gate
-else
-  cpuminer_LDADD += -L@MM_GPU_GATE_DIR@ -lmm_gpu_gate -Wl,-rpath,@MM_GPU_GATE_DIR@
+  cpuminer_LDADD  += -L@MM_GPU_GATE_DIR@ -lmm_gpu_gate
+if !HAVE_WINDOWS
+  cpuminer_LDFLAGS += -Wl,-rpath,@MM_GPU_GATE_DIR@
 endif
 endif
 cpuminer_CPPFLAGS = @LIBCURL_CPPFLAGS@ $(ALL_INCLUDES)
@@ -348,6 +343,6 @@ if WANT_GPU
 install-exec-hook:
 	$(MKDIR_P) $(DESTDIR)$(bindir)/data/kernels
 	$(INSTALL_DATA) \
-	  $(top_srcdir)/algo/argon2d/gpu_gate/argon2-gpu/data/kernels/argon2_kernel.cl \
+	  $(top_srcdir)/algo/argon2d/argon2-gpu/data/kernels/argon2_kernel.cl \
 	  $(DESTDIR)$(bindir)/data/kernels/
 endif
