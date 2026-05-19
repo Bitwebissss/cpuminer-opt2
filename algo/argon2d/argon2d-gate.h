@@ -39,4 +39,7 @@ bool register_argon2id1024_algo( algo_gate_t* gate );
 
 void argon2id1024_hash( void *state, const void *input );
 
+bool init_thread_argon2id1024(int thr_id);
+int  scanhash_argon2id1024_gpu(struct work*, uint32_t, uint64_t*, struct thr_info*);
+
 #endif
