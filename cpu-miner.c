@@ -3640,7 +3640,7 @@ int main(int argc, char *argv[])
          fprintf( stderr, "%s: no usable GPU device found\n", argv[0] );
          exit(1);
       }
-      opt_n_threads = opt_n_threads * gpu_device_count;
+      opt_n_threads = gpu_device_count;
    }
    else
 #endif

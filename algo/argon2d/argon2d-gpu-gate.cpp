@@ -60,7 +60,8 @@ bool init_gpu(int thr_id, CoinAlgo algo, Type type, Version version, Argon2Param
 	int selected_device = 0;
 	if(gpu_ids.size() > 0) {
 	    int selected_entry = thr_id / (total_threads / gpu_device_count);
-	    if(selected_entry < 0 && selected_entry >= gpu_ids.size()) {
+	    // Fix: was && (never fires) — needs || to catch both out-of-range cases
+	    if(selected_entry < 0 || selected_entry >= (int)gpu_ids.size()) {
             argon2_gpu_hashers_mutex.unlock();
             return false;
         }
@@ -191,8 +192,11 @@ int show_gpu_info() {
 
 	gpu_device_count = gpu_ids.empty() ? devices.size() : gpu_ids.size();
 
-	if(gpu_device_count > 0)
-		total_threads *= gpu_device_count;
+	// One miner thread per GPU: total_threads == gpu_device_count.
+	// Do NOT multiply by the original opt_n_threads — init_gpu uses
+	// (total_threads / gpu_device_count) as the stride for thr_id→GPU
+	// mapping, so it must equal 1 to get thr_id 0→GPU0, 1→GPU1, etc.
+	total_threads = gpu_device_count;
 
 	return gpu_device_count;
 }
