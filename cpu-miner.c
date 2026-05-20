@@ -2826,8 +2826,14 @@ out:
 static void show_credits()
 {
    printf("\n         **********  "PACKAGE_NAME" "PACKAGE_VERSION"  ********** \n");
+#ifdef USE_GPU
+   printf("     A CPU/GPU miner with multi algo support and optimized for CPUs\n");
+   printf("     with AVX512, SHA, AES and NEON extensions by JayDDee.\n");
+   printf("     GPU mining support: CUDA and OpenCL (argon2id1024).\n");
+#else
    printf("     A CPU miner with multi algo support and optimized for CPUs\n");
    printf("     with AVX512, SHA, AES and NEON extensions by JayDDee.\n");
+#endif
    printf("     BTC donation address: 12tdvfF7KmAsihBXQXynT6E6th2c2pByTT\n\n");
 }
 
@@ -3627,10 +3633,10 @@ int main(int argc, char *argv[])
    {
       if ( opt_algo != ALGO_ARGON2ID1024 )
       {
-         fprintf( stderr, "%s: --use-gpu is only supported with argon2id1024 algo\n", argv[0] );
+         fprintf( stderr, "%s: --use-gpu requires -a argon2id1024 "
+                          "(only argon2id1024 supports GPU mining)\n", argv[0] );
          show_usage_and_exit(1);
       }
-
 
       int gpu_device_count = check_gpu_capability( use_gpu, gpu_id,
                                                    gpu_batch_size,
@@ -3641,6 +3647,8 @@ int main(int argc, char *argv[])
          exit(1);
       }
       opt_n_threads = gpu_device_count;
+      applog( LOG_INFO, "GPU mode: %s | batch size: %d | devices: %d",
+              use_gpu, gpu_batch_size, gpu_device_count );
    }
    else
 #endif

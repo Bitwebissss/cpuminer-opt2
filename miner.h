@@ -980,9 +980,15 @@ Options:\n\
       --benchmark       run in offline benchmark mode\n\
       --cpu-affinity    set process affinity to cpu core(s), mask 0x3 for cores 0 and 1\n\
       --cpu-priority    set process priority (default: 0 idle, 2 normal to 5 highest) (deprecated)\n\
-      --use-gpu         set use gpu CUDA or OpenCL , example --use-gpu CUDA\n\
-      --gpu-id          set gpu device id --gpu-id 1 or --gpu-id 1,2\n\
-      --gpu-batchsize   set batch size for gpu mining , exmample --gpu-batchsize 64 \n\
+"  
+#ifdef USE_GPU
+"\
+      --use-gpu=CUDA|OPENCL  use GPU mining (argon2id1024 only)\n\
+      --gpu-id=N[,N]    use specific GPU device(s) by index\n\
+      --gpu-batchsize=N set GPU batch size (default: 1, recommend 64+)\n\
+"  
+#endif
+"\
   -b, --api-bind=address[:port]   IP address for the miner API, default port is 4048)\n\
       --api-remote      allow remote control\n\
       --max-temp=N      only mine if cpu temp is less than specified value (linux)\n\
