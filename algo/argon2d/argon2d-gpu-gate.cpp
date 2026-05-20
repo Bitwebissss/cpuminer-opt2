@@ -81,7 +81,8 @@ bool init_gpu(int thr_id, CoinAlgo algo, Type type, Version version, Argon2Param
 			argon2_gpu_hasher_thread_data->processing_unit = NULL;
 
 			ProgramContext *progCtx = new ProgramContext(context, {device}, type, version);
-			argon2_gpu_hasher_thread_data->processing_unit = new ProcessingUnit(progCtx, params, &device, gpu_batch_size, algo, false);
+            bool use_precompute = (type == ARGON2_I || type == ARGON2_ID);
+			argon2_gpu_hasher_thread_data->processing_unit = new ProcessingUnit(progCtx, params, &device, gpu_batch_size, algo, use_precompute);
 
 			std::cout << "[Thread " << thr_id << "] Device #" << (i + 1) << ": " << device.getName()
 					  << std::endl << std::flush;
