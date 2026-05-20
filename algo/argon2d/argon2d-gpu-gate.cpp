@@ -6,7 +6,7 @@
 #include "argon2-gpu/include/argon2-cuda/cudaexception.h"
 
 #include <iostream>
-#include <strstream>
+#include <sstream>
 #include <unordered_map>
 #include <mutex>
 #include <vector>
@@ -153,7 +153,7 @@ argon2_gpu_hasher_thread *get_gpu_thread_data(int thr_id) {
 }
 
 std::string join_ids(const std::vector<int> &ids) {
-    std::ostrstream dest;
+    std::ostringstream dest;
     for(int i=0; i < ids.size(); i++) {
         dest << "#" << (ids[i] + 1) << ((i < (ids.size() - 1)) ? ", " : "");
     }

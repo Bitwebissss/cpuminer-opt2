@@ -61,6 +61,24 @@ omitting the per-thread hashmeter output:
 cpuminer \-BSq \-o http://my.server:9327
 .RE
 .fi
+.PP
+To mine argon2id1024 on a pool using CUDA on GPU #1 with a batch size of 64:
+.PP
+.nf
+.RS
+cpuminer \-a argon2id1024 \-\-use\-gpu=CUDA \-\-gpu\-id=1 \-\-gpu\-batchsize=64 \\
+	\-o stratum+tcp://pool.example.com:3333 \-O wallet.worker:x
+.RE
+.fi
+.PP
+To mine using OpenCL on all available GPUs:
+.PP
+.nf
+.RS
+cpuminer \-a argon2id1024 \-\-use\-gpu=OpenCL \-\-gpu\-batchsize=64 \\
+	\-o stratum+tcp://pool.example.com:3333 \-O wallet.worker:x
+.RE
+.fi
 .SH OPTIONS
 .TP
 \fB\-a\fR, \fB\-\-algo\fR=\fIALGORITHM\fR
@@ -116,6 +134,25 @@ Sample configuration file:
 .TP
 \fB\-D\fR, \fB\-\-debug\fR
 Enable debug output.
+.TP
+\fB\-\-gpu\-batchsize\fR=\fIN\fR
+Set the number of hashes computed per GPU batch.
+Must be a positive integer; default is 1.
+Higher values improve GPU utilization and throughput at the cost of more VRAM.
+Typical values are 32, 64, or 128 depending on the GPU memory available.
+.TP
+\fB\-\-gpu\-id\fR=\fILIST\fR
+Select which GPU device(s) to use, as a comma-separated list of 1-based device
+indices (e.g. \fB1\fR for the first GPU, \fB1,2\fR for the first two).
+If not specified, all available GPUs are used, one miner thread per GPU.
+Device indices correspond to the order reported by the CUDA or OpenCL runtime.
+.TP
+\fB\-\-use\-gpu\fR=\fITYPE\fR
+Enable GPU mining using the specified backend.
+\fITYPE\fR must be \fBCUDA\fR or \fBOpenCL\fR (case-insensitive).
+When this option is set, one miner thread is created per selected GPU and
+CPU mining is disabled.
+Requires that the miner was built with GPU support (\fBUSE_GPU\fR).
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print a help message and exit.

@@ -17,12 +17,23 @@ endif()
 if(CUDA_FOUND)
     message(STATUS "Using CUDA version ${CUDA_VERSION}")
     add_definitions(-DHAVE_CUDA=1)
+
+    set(ARGON2_CUDA_GENCODE
+        -gencode arch=compute_61,code=sm_61
+        -gencode arch=compute_75,code=sm_75
+        -gencode arch=compute_80,code=sm_80
+        -gencode arch=compute_86,code=sm_86
+        -gencode arch=compute_86,code=compute_86
+    )
+
     if(MSVC OR WIN32)
         set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
-            -std=c++14 -O3 --ptxas-options=-v -lineinfo)
+            -std=c++17 -O3 --ptxas-options=-v -lineinfo
+            ${ARGON2_CUDA_GENCODE})
     else()
         set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
-            -std=c++14 --compiler-options=-fPIC -O3 --ptxas-options=-v -lineinfo)
+            -std=c++17 --compiler-options=-fPIC -O3 --ptxas-options=-v -lineinfo
+            ${ARGON2_CUDA_GENCODE})
     endif()
 else()
     message(STATUS "Building without CUDA support")
