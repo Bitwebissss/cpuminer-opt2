@@ -14,7 +14,7 @@
 # Builds: SSE2, AES+SSE4.2, AVX, AVX2, AVX2+SHA, AVX2+SHA+VAES, AVX512, AVX512+SHA+VAES
 # Output: cpuminer-windows-gpu.zip and/or cpuminer-windows-nogpu.zip in project root
 
-set -e
+set -eo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -44,8 +44,10 @@ else
 fi
 
 NO_GPU=0
+JOBS=4   # default: safe for most machines; override with --jobs=N
 for arg in "$@"; do
     [ "$arg" = "--no-gpu" ] && NO_GPU=1
+    [[ "$arg" == --jobs=* ]] && JOBS="${arg#--jobs=}"
 done
 
 RELEASE_GPU="$PROJECT_DIR/release-windows/gpu"
@@ -57,6 +59,7 @@ DEFAULT_CFLAGS_OLD="-O3 -Wall"
 info "Project dir : $PROJECT_DIR"
 info "GPU gate dir: $GPU_GATE_DIR"
 info "No-GPU only : $NO_GPU"
+info "Make jobs   : $JOBS  (override: --jobs=N)"
 
 # ============================================================
 #  ENSURE UCRT64 TOOLCHAIN IN PATH
@@ -127,8 +130,13 @@ build_variant() {
     make clean 2>/dev/null || true
     rm -f config.status
     export CFLAGS="$cflags"
-    ./configure $conf_args 2>&1 | grep -E "(checking|error|warning)" | tail -5 || true
-    make -j$(nproc) 2>&1 | tail -3
+    # configure: показываем только важные строки, но ошибку НЕ глушим
+    ./configure $conf_args 2>&1 | grep -E "(error:|warning:|^checking)" | tail -8 || true
+    # make: pipefail уже включён выше, PIPESTATUS[0] ловит код make до pipe
+    make -j"$JOBS" 2>&1 | tee "/tmp/make_${name}.log" | tail -5
+    if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+        error "make failed for $name — полный лог: /tmp/make_${name}.log"
+    fi
     strip -s cpuminer.exe
     cp cpuminer.exe "$out_dir/$name"
     info "  → $name done"
