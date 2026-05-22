@@ -11,10 +11,13 @@
 #   CPUMINER_GPU_GATE_WIN="C:/cpuminer-opt3/algo/argon2d/argon2-gpu/build_vs/Release" \
 #   bash build-windows-stage2.sh
 #
+#   # Quick test: build only one variant (e.g. sse2) and then package
+#   QUICK_TEST=1 QUICK_VARIANT="cpuminer-sse2.exe" bash build-windows-stage2.sh --no-gpu
+#
 # Builds: SSE2, AES+SSE4.2, AVX, AVX2, AVX2+SHA, AVX2+SHA+VAES, AVX512, AVX512+SHA+VAES
 # Output: cpuminer-windows-gpu.zip and/or cpuminer-windows-nogpu.zip in project root
 
-set -eo pipefail
+set -e
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -24,6 +27,13 @@ NC='\033[0m'
 info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+
+# ============================================================
+#  QUICK TEST MODE (build only one variant)
+# ============================================================
+# Set environment variables QUICK_TEST=1 and QUICK_VARIANT="cpuminer-xxx.exe"
+QUICK_TEST=${QUICK_TEST:-0}
+QUICK_VARIANT=${QUICK_VARIANT:-"cpuminer-sse2.exe"}
 
 # ============================================================
 #  RESOLVE PROJECT DIR
@@ -57,39 +67,14 @@ DEFAULT_CFLAGS_OLD="-O3 -Wall"
 info "Project dir : $PROJECT_DIR"
 info "GPU gate dir: $GPU_GATE_DIR"
 info "No-GPU only : $NO_GPU"
+if [ "$QUICK_TEST" = "1" ]; then
+    info "QUICK TEST MODE: will build only $QUICK_VARIANT and then package it"
+fi
 
 # ============================================================
 #  ENSURE UCRT64 TOOLCHAIN IN PATH
 # ============================================================
 export PATH="/ucrt64/bin:/usr/bin:$PATH"
-
-# ============================================================
-#  STATIC LINK ENVIRONMENT
-# ============================================================
-# LDFLAGS / CPPFLAGS are exported (not embedded in CONF_BASE string)
-# so multi-word values survive word-split when ./configure $conf_args runs.
-#
-# WHY -static:
-#   Avoids shipping ucrt64 runtime DLLs with every no-GPU build.
-#   With -static, GCC prefers libXXX.a over libXXX.dll.a for every lib
-#   that ships both. Windows system DLLs (kernel32, ntdll …) are always
-#   dynamic because they have no .a counterpart — that is correct.
-#
-# WHY export LIBS (not just LDFLAGS):
-#   configure.ac hardcodes LIBCURL="-lcurl -lz" (no transitive deps).
-#   With -static the linker picks libcurl.a, which internally references
-#   libssl, libcrypto, libbrotli*, libnghttp2, libzstd, libidn2 … none of
-#   which appear in the link command → undefined reference → make fails.
-#   LIBS is the standard autoconf variable for extra link libraries; anything
-#   exported here gets written into the generated Makefile and appended to
-#   every link command — exactly where the missing deps need to go.
-#   pkg-config --static --libs resolves the full dependency graph.
-export PKG_CONFIG_PATH="/ucrt64/lib/pkgconfig:/ucrt64/share/pkgconfig"
-export LDFLAGS="-L/ucrt64/lib -static"
-export CPPFLAGS="-I/ucrt64/include"
-export LIBS
-LIBS="$(pkg-config --static --libs libcurl openssl 2>/dev/null)" \
-    || { warn "pkg-config --static failed; static link may have missing deps"; LIBS=""; }
 
 # ============================================================
 #  CHECK REQUIRED MSYS2 PACKAGES
@@ -130,7 +115,7 @@ fi
 # ============================================================
 #  CONFIGURE ARGS
 # ============================================================
-CONF_BASE="--with-curl=/ucrt64 --host=x86_64-w64-mingw32"
+CONF_BASE="--with-curl=/ucrt64 --host=x86_64-w64-mingw32 LDFLAGS=-L/ucrt64/lib CPPFLAGS=-I/ucrt64/include"
 CONF_GPU="--enable-gpu --with-mm-gpu-gate=$GPU_GATE_DIR $CONF_BASE"
 CONF_NOGPU="$CONF_BASE"
 
@@ -142,7 +127,7 @@ info "Running autogen.sh..."
 ./autogen.sh
 
 # ============================================================
-#  BUILD FUNCTION
+#  BUILD FUNCTION (with quick test support)
 # ============================================================
 # Usage: build_variant "<cflags>" "<output_name>" "<conf_args>" "<out_dir>"
 build_variant() {
@@ -151,13 +136,19 @@ build_variant() {
     local conf_args="$3"
     local out_dir="$4"
 
+    # Skip if quick test mode and not the selected variant
+    if [ "$QUICK_TEST" = "1" ] && [ "$name" != "$QUICK_VARIANT" ]; then
+        info "  Skipping $name (quick test mode)"
+        return 0
+    fi
+
     info "  Building $name..."
     make clean 2>/dev/null || true
     rm -f config.status
     export CFLAGS="$cflags"
     ./configure $conf_args 2>&1 | grep -E "(checking|error|warning)" | tail -5 || true
-    make -j$(nproc) 2>&1 | tail -20
-    strip -s cpuminer.exe || error "$name: cpuminer.exe not produced – check make output above"
+    make -j$(nproc) 2>&1 | tail -3
+    strip -s cpuminer.exe
     cp cpuminer.exe "$out_dir/$name"
     info "  → $name done"
 }
@@ -201,57 +192,35 @@ build_variant "-march=westmere -maes $DEFAULT_CFLAGS_OLD"   "cpuminer-aes-sse42.
 build_variant "-msse2 $DEFAULT_CFLAGS_OLD"                  "cpuminer-sse2.exe"            "$CONF_NOGPU" "$RELEASE_NOGPU"
 
 # ============================================================
-#  COPY RUNTIME DLLs  (GPU builds only)
+#  COPY RUNTIME DLLs
 # ============================================================
-# No-GPU builds are fully static: every dependency (curl, ssl, gmp,
-# jansson, pthreads …) is compiled into the .exe.  Nothing to copy.
-#
-# GPU builds dynamically load libmm_gpu_gate.dll (CUDA/OpenCL gate).
-# That DLL and its transitive deps still need to ship alongside the exe.
+info ""
+info "Copying runtime DLLs..."
 
 copy_runtime_dlls() {
     local rel_dir="$1"
     local changed=1
 
-    # Loop until no new DLLs are found — captures transitive dependencies.
-    #
-    # WHY objdump instead of ldd:
-    #   ldd is an ELF tool; on MSYS2 it tries to simulate PE loading and often
-    #   emits "??? (0x...)" instead of real paths for ucrt64 binaries — nothing
-    #   gets copied.  objdump -p reads the PE import table directly from the
-    #   file header: it always returns the exact DLL names the binary declares,
-    #   independent of runtime path resolution.
-    #
-    # WHY checking /ucrt64/bin instead of filtering by pattern:
-    #   System DLLs (kernel32, ntdll, ws2_32, bcrypt, …) are never in
-    #   /ucrt64/bin, so the check acts as an automatic allow-list with zero
-    #   false positives and no hard-coded skip list to maintain.
+    # Loop until no new DLLs are found — captures transitive dependencies
     while [ "$changed" = "1" ]; do
         changed=0
-
         local targets
         targets=$(find "$rel_dir" -maxdepth 1 \( -name "*.exe" -o -name "*.dll" \) 2>/dev/null)
         [ -z "$targets" ] && break
 
-        # Read PE import tables → get every DLL name declared by every target
-        local dll_names
-        dll_names=$(objdump -p $targets 2>/dev/null \
-            | grep -i "DLL Name:" \
-            | awk '{print tolower($3)}' \
-            | sort -u) || true
-        [ -z "$dll_names" ] && break
+        local dlls
+        dlls=$(ldd $targets 2>/dev/null \
+            | grep -i "ucrt64\|mingw" \
+            | awk '{print $3}' \
+            | grep "^/" \
+            | sort -u)
 
-        for dll_name in $dll_names; do
-            # Find the actual file in ucrt64/bin (case-insensitive; NTFS is CI)
-            local src
-            src=$(find /ucrt64/bin -maxdepth 1 -iname "$dll_name" 2>/dev/null | head -1)
-            [ -z "$src" ] && continue   # not a ucrt64 DLL → system DLL → skip
-
-            local dest_name
-            dest_name=$(basename "$src")
-            if [ ! -f "$rel_dir/$dest_name" ]; then
-                cp "$src" "$rel_dir/$dest_name"
-                info "  Copied: $dest_name"
+        for dll in $dlls; do
+            local name
+            name=$(basename "$dll")
+            if [ -f "$dll" ] && [ ! -f "$rel_dir/$name" ]; then
+                cp "$dll" "$rel_dir/"
+                info "  Copied: $name"
                 changed=1
             fi
         done
@@ -259,16 +228,16 @@ copy_runtime_dlls() {
 }
 
 if [ "$NO_GPU" = "0" ]; then
-    info ""
-    info "Copying GPU runtime DLLs..."
-    # Copy the GPU gate DLL first so copy_runtime_dlls also scans its imports
+    copy_runtime_dlls "$RELEASE_GPU"
+    # GPU-specific files
     cp "$GPU_GATE_DIR/libmm_gpu_gate.dll" "$RELEASE_GPU/"
     info "  Copied: libmm_gpu_gate.dll"
-    copy_runtime_dlls "$RELEASE_GPU"
     mkdir -p "$RELEASE_GPU/data/kernels"
     cp "$PROJECT_DIR/algo/argon2d/argon2-gpu/data/kernels/argon2_kernel.cl" "$RELEASE_GPU/data/kernels/"
     info "  Copied: argon2_kernel.cl"
 fi
+
+copy_runtime_dlls "$RELEASE_NOGPU"
 
 # ============================================================
 #  COPY DOCUMENTATION
