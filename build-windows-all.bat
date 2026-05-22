@@ -45,6 +45,11 @@ echo [CHECK] MSYS2...
 if not exist "%MSYS2_BASH%" echo MISSING: %MSYS2_BASH%
 if not exist "%MSYS2_BASH%" goto :fail
 
+echo [CHECK] Ensuring OpenCL headers and ICD are installed via MSYS2...
+"%MSYS2_BASH%" --login -c "pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-opencl-headers mingw-w64-ucrt-x86_64-opencl-icd"
+if errorlevel 1 echo ERROR: pacman failed to install OpenCL packages
+if errorlevel 1 goto :fail
+
 echo [CHECK] gendef...
 if not exist "%GENDEF%" echo MISSING: %GENDEF%
 if not exist "%GENDEF%" goto :fail
@@ -86,8 +91,7 @@ echo.
 
 set "GPU_SRC_FWD=%GPU_SRC:\=/%"
 set "OPENCL_LIB_FWD=%GPU_BUILD:\=/%"
-set "OPENCL_INC=C:\msys64\ucrt64\include"
-set "OPENCL_INC_FWD=%OPENCL_INC:\=/%"
+set "OPENCL_INC_FWD=C:/msys64/ucrt64/include"
 
 echo [3/5] cmake configure...
 cmake "%GPU_SRC_FWD%" -G "Visual Studio 16 2019" -A x64 -DNO_CUDA=FALSE -DCMAKE_BUILD_TYPE=Release -DOpenCL_LIBRARY="%OPENCL_LIB_FWD%/OpenCL.lib" -DOpenCL_INCLUDE_DIR="%OPENCL_INC_FWD%"
