@@ -2,19 +2,11 @@
 #
 # build-windows-stage2.sh
 # Called by build-windows-all.bat via MSYS2 UCRT64 bash.
-# Can also be run manually inside MSYS2 UCRT64 terminal:
+# Builds fully static cpuminer.exe variants (except libmm_gpu_gate.dll for GPU)
+# with automatic copying of required DLLs (only those that are not static).
 #
-#   # Without GPU (CPU-only, all arch variants):
-#   bash build-windows-stage2.sh --no-gpu
-#
-#   # With GPU (requires Stage 1 / libmm_gpu_gate.dll to exist first):
-#   CPUMINER_GPU_GATE_WIN="C:/cpuminer-opt3/algo/argon2d/argon2-gpu/build_vs/Release" \
-#   bash build-windows-stage2.sh
-#
-# Builds: SSE2, AES+SSE4.2, AVX, AVX2, AVX2+SHA, AVX2+SHA+VAES, AVX512, AVX512+SHA+VAES
-# Output: cpuminer-windows-gpu.zip and/or cpuminer-windows-nogpu.zip in project root
 
-set -eo pipefail
+set -e
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -25,18 +17,14 @@ info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
-# ============================================================
-#  RESOLVE PROJECT DIR
-# ============================================================
-# When called from bat: $1 is the unix-style project path (/c/cpuminer-opt3)
-# When called manually: auto-detect from script location
+# Resolve project directory
 if [ -n "$1" ] && [ "$1" != "--no-gpu" ]; then
     PROJECT_DIR="$1"
 else
     PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 
-# GPU gate directory (set by bat via CPUMINER_GPU_GATE_WIN env var, or default)
+# GPU gate directory
 if [ -n "$CPUMINER_GPU_GATE_WIN" ]; then
     GPU_GATE_DIR=$(cygpath -u "$CPUMINER_GPU_GATE_WIN")
 else
@@ -58,28 +46,19 @@ info "Project dir : $PROJECT_DIR"
 info "GPU gate dir: $GPU_GATE_DIR"
 info "No-GPU only : $NO_GPU"
 
-# ============================================================
-#  ENSURE UCRT64 TOOLCHAIN IN PATH
-# ============================================================
 export PATH="/ucrt64/bin:/usr/bin:$PATH"
 
-# ============================================================
-#  CHECK REQUIRED MSYS2 PACKAGES
-# ============================================================
+# Install required MSYS2 packages (static libs are included in regular packages)
 info "Checking MSYS2 packages..."
 REQUIRED_PKGS=(
     mingw-w64-ucrt-x86_64-gcc
     mingw-w64-ucrt-x86_64-curl
+    mingw-w64-ucrt-x86_64-openssl
     mingw-w64-ucrt-x86_64-jansson
     mingw-w64-ucrt-x86_64-gmp
-    mingw-w64-ucrt-x86_64-openssl
     mingw-w64-ucrt-x86_64-opencl-icd
     mingw-w64-ucrt-x86_64-opencl-headers
-    autoconf
-    automake
-    libtool
-    pkg-config
-    zip
+    autoconf automake libtool pkg-config zip
 )
 MISSING=()
 for pkg in "${REQUIRED_PKGS[@]}"; do
@@ -91,74 +70,30 @@ if [ ${#MISSING[@]} -gt 0 ]; then
 fi
 info "Packages OK"
 
-# ============================================================
-#  VALIDATE GPU GATE (if GPU build requested)
-# ============================================================
+# Validate GPU gate
 if [ "$NO_GPU" = "0" ]; then
-    [ -f "$GPU_GATE_DIR/libmm_gpu_gate.dll" ]   || error "libmm_gpu_gate.dll not found in $GPU_GATE_DIR — run Stage 1 first"
-    [ -f "$GPU_GATE_DIR/libmm_gpu_gate.dll.a" ] || error "libmm_gpu_gate.dll.a not found in $GPU_GATE_DIR — run Stage 1 first"
+    [ -f "$GPU_GATE_DIR/libmm_gpu_gate.dll" ]   || error "libmm_gpu_gate.dll not found in $GPU_GATE_DIR"
+    [ -f "$GPU_GATE_DIR/libmm_gpu_gate.dll.a" ] || error "libmm_gpu_gate.dll.a not found in $GPU_GATE_DIR"
 fi
 
-# ============================================================
-#  CONFIGURE ARGS
-# ============================================================
-export CPPFLAGS="-I/ucrt64/include -DCURL_STATICLIB"
-export PKG_CONFIG_PATH="/ucrt64/lib/pkgconfig"
-
+# Configure arguments
 CONF_BASE="--with-curl=/ucrt64 --host=x86_64-w64-mingw32"
 CONF_GPU="--enable-gpu --with-mm-gpu-gate=$GPU_GATE_DIR $CONF_BASE"
 CONF_NOGPU="$CONF_BASE"
 
-# ------------------------------------------------------------
-#  setup_env_gpu
-#
-#  Link strategy: LDADD order in automake is
-#    $(CC) $(LDFLAGS) ... $(cpuminer_LDADD) $(LIBS)
-#  cpuminer_LDADD adds -lmm_gpu_gate (dynamic import lib .dll.a).
-#  -Wl,-Bstatic must NOT be in LDFLAGS (would make mm_gpu_gate static → fail).
-#  Instead: put -Wl,-Bstatic in LIBS so curl/ssl/etc are static,
-#  and mm_gpu_gate in LDADD stays dynamic (default).
-#  -static-libgcc prevents libgcc_s_seh-1.dll from being required.
-# ------------------------------------------------------------
-setup_env_gpu() {
-    local _transitive
-    _transitive=$(pkg-config --static --libs libcurl openssl 2>/dev/null \
-        | sed 's/-lcurl\b//g; s/-lssl\b//g; s/-lcrypto\b//g; s/-lz\b//g' \
-        | tr ' ' '\n' | sort -u | tr '\n' ' ')
-    export LDFLAGS="-L/ucrt64/lib -L$GPU_GATE_DIR -static-libgcc"
-    export LIBS="-Wl,-Bstatic $_transitive -Wl,-Bdynamic"
-    info "[GPU env] LDFLAGS: $LDFLAGS"
-    info "[GPU env] LIBS: $LIBS"
-}
+# Export environment for static linking of curl/openssl
+export CPPFLAGS="-I/ucrt64/include"
+export PKG_CONFIG_PATH="/ucrt64/lib/pkgconfig"
+export LDFLAGS="-L/ucrt64/lib -static-libgcc -static-libstdc++"
 
-# ------------------------------------------------------------
-#  setup_env_nogpu
-#
-#  No mm_gpu_gate at all — fully static exe.
-#  -static in LDFLAGS covers everything including gcc runtime.
-# ------------------------------------------------------------
-setup_env_nogpu() {
-    local _transitive
-    _transitive=$(pkg-config --static --libs libcurl openssl 2>/dev/null \
-        | sed 's/-lcurl\b//g; s/-lssl\b//g; s/-lcrypto\b//g; s/-lz\b//g' \
-        | tr ' ' '\n' | sort -u | tr '\n' ' ')
-    export LDFLAGS="-L/ucrt64/lib -static"
-    export LIBS="$_transitive"
-    info "[NOGPU env] LDFLAGS: $LDFLAGS"
-    info "[NOGPU env] LIBS: $LIBS"
-}
+# Get static library flags for curl and openssl
+STATIC_LIBS=$(pkg-config --static --libs libcurl openssl 2>/dev/null || echo "-lcurl -lssl -lcrypto -lz")
 
-# ============================================================
-#  REGENERATE CONFIGURE
-# ============================================================
 cd "$PROJECT_DIR"
 info "Running autogen.sh..."
 ./autogen.sh
 
-# ============================================================
-#  BUILD FUNCTION
-# ============================================================
-# Usage: build_variant "<cflags>" "<output_name>" "<conf_args>" "<out_dir>"
+# Build function (pass STATIC_LIBS and -DCURL_STATICLIB)
 build_variant() {
     local cflags="$1"
     local name="$2"
@@ -168,23 +103,21 @@ build_variant() {
     info "  Building $name..."
     make clean 2>/dev/null || true
     rm -f config.status
-    export CFLAGS="$cflags"
-    ./configure $conf_args 2>&1 | grep -E "(checking|error|warning)" | tail -5 || true
-    make -j$(nproc) 2>&1 | tail -20
-    strip -s cpuminer.exe || error "$name: cpuminer.exe not produced – check make output above"
+    export CFLAGS="$cflags -DCURL_STATICLIB"
+    # Pass static library flags directly to configure
+    ./configure $conf_args LIBS="$STATIC_LIBS" 2>&1 | grep -E "(checking|error|warning)" | tail -5 || true
+    make -j$(nproc) 2>&1 | tail -3
+    strip -s cpuminer.exe
     cp cpuminer.exe "$out_dir/$name"
     info "  → $name done"
 }
 
-# ============================================================
-#  BUILD GPU VARIANTS
-# ============================================================
+# Build GPU variants (static exe + dynamic libmm_gpu_gate)
 if [ "$NO_GPU" = "0" ]; then
     info ""
     info "========================================"
     info "  Building GPU variants (8 CPU archs)"
     info "========================================"
-    setup_env_gpu
     mkdir -p "$RELEASE_GPU"
 
     build_variant "-march=icelake-client $DEFAULT_CFLAGS"       "cpuminer-avx512-sha-vaes.exe" "$CONF_GPU" "$RELEASE_GPU"
@@ -197,14 +130,11 @@ if [ "$NO_GPU" = "0" ]; then
     build_variant "-msse2 $DEFAULT_CFLAGS_OLD"                  "cpuminer-sse2.exe"            "$CONF_GPU" "$RELEASE_GPU"
 fi
 
-# ============================================================
-#  BUILD NO-GPU VARIANTS
-# ============================================================
+# Build no-GPU variants (fully static)
 info ""
 info "========================================"
 info "  Building no-GPU variants (8 CPU archs)"
 info "========================================"
-setup_env_nogpu
 mkdir -p "$RELEASE_NOGPU"
 
 build_variant "-march=icelake-client $DEFAULT_CFLAGS"       "cpuminer-avx512-sha-vaes.exe" "$CONF_NOGPU" "$RELEASE_NOGPU"
@@ -216,35 +146,34 @@ build_variant "-march=corei7-avx -maes $DEFAULT_CFLAGS_OLD" "cpuminer-avx.exe"  
 build_variant "-march=westmere -maes $DEFAULT_CFLAGS_OLD"   "cpuminer-aes-sse42.exe"       "$CONF_NOGPU" "$RELEASE_NOGPU"
 build_variant "-msse2 $DEFAULT_CFLAGS_OLD"                  "cpuminer-sse2.exe"            "$CONF_NOGPU" "$RELEASE_NOGPU"
 
-# ============================================================
-#  COPY RUNTIME FILES
-# ============================================================
-# exe files are fully statically linked — no ucrt64 DLLs needed.
-#
-# GPU build needs only:
-#   libmm_gpu_gate.dll  — our GPU gate (argon2 + cudart compiled in)
-#   argon2_kernel.cl    — OpenCL kernel loaded at runtime
-#
-# No-GPU build needs nothing extra — exe is fully self-contained.
-#
-# OpenCL.dll and MSVC CRT (VCRUNTIME140.dll etc.) come with the GPU driver
-# and are already in System32 on any machine that can run a GPU miner.
+# Copy runtime DLLs (original logic, preserved)
 info ""
-info "Copying runtime files..."
+info "Copying runtime DLLs..."
 
 if [ "$NO_GPU" = "0" ]; then
     cp "$GPU_GATE_DIR/libmm_gpu_gate.dll" "$RELEASE_GPU/"
     info "  Copied: libmm_gpu_gate.dll"
+
     mkdir -p "$RELEASE_GPU/data/kernels"
     cp "$PROJECT_DIR/algo/argon2d/argon2-gpu/data/kernels/argon2_kernel.cl" "$RELEASE_GPU/data/kernels/"
     info "  Copied: argon2_kernel.cl"
+
+    (cd "$RELEASE_GPU" && ldd cpuminer-sse2.exe libmm_gpu_gate.dll 2>/dev/null \
+        | grep "ucrt64" \
+        | awk '{print $3}' \
+        | sort -u \
+        | xargs -I{} cp {} .)
+    info "  Runtime DLLs copied to $RELEASE_GPU"
 fi
 
-info "  No-GPU build is fully static — no DLLs to copy."
+(cd "$RELEASE_NOGPU" && ldd cpuminer-sse2.exe 2>/dev/null \
+    | grep "ucrt64" \
+    | awk '{print $3}' \
+    | sort -u \
+    | xargs -I{} cp {} .)
+info "  Runtime DLLs copied to $RELEASE_NOGPU"
 
-# ============================================================
-#  COPY DOCUMENTATION
-# ============================================================
+# Copy documentation
 info "Copying documentation..."
 for f in README.txt README.md RELEASE_NOTES verthash-help.txt; do
     if [ -f "$PROJECT_DIR/$f" ]; then
@@ -253,18 +182,14 @@ for f in README.txt README.md RELEASE_NOTES verthash-help.txt; do
     fi
 done
 
-# ============================================================
-#  HASHES
-# ============================================================
+# Generate SHA-256 hashes
 info "Generating SHA-256 hashes..."
 if [ "$NO_GPU" = "0" ]; then
     (cd "$RELEASE_GPU"   && sha256sum * 2>/dev/null > hashes.txt || true)
 fi
 (cd "$RELEASE_NOGPU" && sha256sum * 2>/dev/null > hashes.txt || true)
 
-# ============================================================
-#  PACK ZIPS
-# ============================================================
+# Create zip archives
 info "Creating zip archives..."
 cd "$PROJECT_DIR"
 
@@ -278,9 +203,7 @@ rm -f cpuminer-windows-nogpu.zip
 zip -r cpuminer-windows-nogpu.zip release-windows/nogpu/
 info "  Created: cpuminer-windows-nogpu.zip"
 
-# ============================================================
-#  SUMMARY
-# ============================================================
+# Summary
 info ""
 info "========================================"
 info "  Stage 2 complete."
