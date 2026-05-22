@@ -14,7 +14,7 @@
 # Builds: SSE2, AES+SSE4.2, AVX, AVX2, AVX2+SHA, AVX2+SHA+VAES, AVX512, AVX512+SHA+VAES
 # Output: cpuminer-windows-gpu.zip and/or cpuminer-windows-nogpu.zip in project root
 
-set -e
+set -eo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -128,8 +128,8 @@ build_variant() {
     rm -f config.status
     export CFLAGS="$cflags"
     ./configure $conf_args 2>&1 | grep -E "(checking|error|warning)" | tail -5 || true
-    make -j$(nproc) 2>&1 | tail -3
-    strip -s cpuminer.exe
+    make -j$(nproc) 2>&1 | tail -20
+    strip -s cpuminer.exe || error "$name: cpuminer.exe not produced – check make output above"
     cp cpuminer.exe "$out_dir/$name"
     info "  → $name done"
 }
@@ -178,31 +178,66 @@ build_variant "-msse2 $DEFAULT_CFLAGS_OLD"                  "cpuminer-sse2.exe" 
 info ""
 info "Copying runtime DLLs..."
 
-# All exe variants share identical DLL dependencies — only -march differs, not linkage.
-# Running ldd on cpuminer-sse2.exe is sufficient for the full dependency list.
-# For GPU builds libmm_gpu_gate.dll is added so its own ucrt64 deps are included too,
-# matching the manual deploy step from the build guide exactly.
+copy_runtime_dlls() {
+    local rel_dir="$1"
+    local changed=1
+
+    # Loop until no new DLLs are found — captures transitive dependencies.
+    #
+    # WHY objdump instead of ldd:
+    #   ldd is an ELF tool; on MSYS2 it tries to simulate PE loading and often
+    #   emits "??? (0x...)" instead of real paths for ucrt64 binaries — nothing
+    #   gets copied.  objdump -p reads the PE import table directly from the
+    #   file header: it always returns the exact DLL names the binary declares,
+    #   independent of runtime path resolution.
+    #
+    # WHY checking /ucrt64/bin instead of filtering by pattern:
+    #   System DLLs (kernel32, ntdll, ws2_32, bcrypt, …) are never in
+    #   /ucrt64/bin, so the check acts as an automatic allow-list with zero
+    #   false positives and no hard-coded skip list to maintain.
+    while [ "$changed" = "1" ]; do
+        changed=0
+
+        local targets
+        targets=$(find "$rel_dir" -maxdepth 1 \( -name "*.exe" -o -name "*.dll" \) 2>/dev/null)
+        [ -z "$targets" ] && break
+
+        # Read PE import tables → get every DLL name declared by every target
+        local dll_names
+        dll_names=$(objdump -p $targets 2>/dev/null \
+            | grep -i "DLL Name:" \
+            | awk '{print tolower($3)}' \
+            | sort -u) || true
+        [ -z "$dll_names" ] && break
+
+        for dll_name in $dll_names; do
+            # Find the actual file in ucrt64/bin (case-insensitive; NTFS is CI)
+            local src
+            src=$(find /ucrt64/bin -maxdepth 1 -iname "$dll_name" 2>/dev/null | head -1)
+            [ -z "$src" ] && continue   # not a ucrt64 DLL → system DLL → skip
+
+            local dest_name
+            dest_name=$(basename "$src")
+            if [ ! -f "$rel_dir/$dest_name" ]; then
+                cp "$src" "$rel_dir/$dest_name"
+                info "  Copied: $dest_name"
+                changed=1
+            fi
+        done
+    done
+}
 
 if [ "$NO_GPU" = "0" ]; then
+    # Copy the GPU gate DLL first so copy_runtime_dlls also scans its imports
     cp "$GPU_GATE_DIR/libmm_gpu_gate.dll" "$RELEASE_GPU/"
     info "  Copied: libmm_gpu_gate.dll"
+    copy_runtime_dlls "$RELEASE_GPU"
     mkdir -p "$RELEASE_GPU/data/kernels"
     cp "$PROJECT_DIR/algo/argon2d/argon2-gpu/data/kernels/argon2_kernel.cl" "$RELEASE_GPU/data/kernels/"
     info "  Copied: argon2_kernel.cl"
-    (cd "$RELEASE_GPU" && ldd cpuminer-sse2.exe libmm_gpu_gate.dll 2>/dev/null \
-        | grep "ucrt64" \
-        | awk '{print $3}' \
-        | sort -u \
-        | xargs -I{} cp {} .)
-    info "  Runtime DLLs copied to $RELEASE_GPU"
 fi
 
-(cd "$RELEASE_NOGPU" && ldd cpuminer-sse2.exe 2>/dev/null \
-    | grep "ucrt64" \
-    | awk '{print $3}' \
-    | sort -u \
-    | xargs -I{} cp {} .)
-info "  Runtime DLLs copied to $RELEASE_NOGPU"
+copy_runtime_dlls "$RELEASE_NOGPU"
 
 # ============================================================
 #  COPY DOCUMENTATION
