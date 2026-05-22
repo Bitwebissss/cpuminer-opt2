@@ -18,7 +18,7 @@ error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
 # === QUICK TEST MODE ===
 QUICK_TEST=0                 # Set to 1 to enable quick test
-QUICK_VARIANT="cpuminer-sse2.exe"  # Exact executable name to build (e.g. cpuminer-sse2.exe)
+QUICK_VARIANT="cpuminer-sse2.exe"  # Exact executable name to build
 # =========================
 
 # Resolve project directory
@@ -90,10 +90,13 @@ CONF_NOGPU="$CONF_BASE"
 
 export CPPFLAGS="-I/ucrt64/include"
 export PKG_CONFIG_PATH="/ucrt64/lib/pkgconfig"
-export LDFLAGS="-L/ucrt64/lib -static-libgcc -static-libstdc++"
+# Use fully static linking where possible
+export LDFLAGS="-L/ucrt64/lib -static -static-libgcc -static-libstdc++"
 
-STATIC_LIBS=$(pkg-config --static --libs libcurl openssl 2>/dev/null || echo "-lcurl -lssl -lcrypto -lz")
-STATIC_LIBS_WRAPPED="-Wl,-Bstatic $STATIC_LIBS -Wl,-Bdynamic"
+# Get static library flags from pkg-config
+STATIC_LIBS=$(pkg-config --static --libs libcurl openssl 2>/dev/null || echo "-lcurl -lssl -lcrypto -lz -lws2_32")
+# Pass them directly to LIBS
+export LIBS="$STATIC_LIBS"
 
 cd "$PROJECT_DIR"
 info "Running autogen.sh..."
@@ -116,7 +119,9 @@ build_variant() {
     make clean 2>/dev/null || true
     rm -f config.status
     export CFLAGS="$cflags -DCURL_STATICLIB"
-    ./configure $conf_args LIBCURL="$STATIC_LIBS_WRAPPED" 2>&1 | grep -E "(checking|error|warning)" | tail -5 || true
+    # Use relative path to configure script to avoid MSYS2 absolute path bug
+    REL_CONFIGURE=$(realpath --relative-to="." "$PROJECT_DIR/configure")
+    $REL_CONFIGURE $conf_args 2>&1 | grep -E "(checking|error|warning)" | tail -5 || true
     make -j$(nproc) 2>&1 | tail -3
     strip -s cpuminer.exe
     cp cpuminer.exe "$out_dir/$name"
