@@ -1324,7 +1324,6 @@ uint64_t KernelRunner::get_time() {
 #ifdef _WIN64
 	FILETIME ft;
 	uint64_t tmpres = 0;
-	static int tzflag;
 
 	GetSystemTimeAsFileTime(&ft);
 
