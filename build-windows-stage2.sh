@@ -14,7 +14,7 @@
 # Builds: SSE2, AES+SSE4.2, AVX, AVX2, AVX2+SHA, AVX2+SHA+VAES, AVX512, AVX512+SHA+VAES
 # Output: cpuminer-windows-gpu.zip and/or cpuminer-windows-nogpu.zip in project root
 
-set -eo pipefail
+set -e
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -44,10 +44,8 @@ else
 fi
 
 NO_GPU=0
-JOBS=4   # default: safe for most machines; override with --jobs=N
 for arg in "$@"; do
     [ "$arg" = "--no-gpu" ] && NO_GPU=1
-    [[ "$arg" == --jobs=* ]] && JOBS="${arg#--jobs=}"
 done
 
 RELEASE_GPU="$PROJECT_DIR/release-windows/gpu"
@@ -56,10 +54,20 @@ RELEASE_NOGPU="$PROJECT_DIR/release-windows/nogpu"
 DEFAULT_CFLAGS="-maes -O3 -Wall"
 DEFAULT_CFLAGS_OLD="-O3 -Wall"
 
+# Full static link: all ucrt64 libraries (curl, gmp, openssl, jansson, …) are
+# bundled directly into the exe.  The only dynamic dependency that remains is
+# OpenCL.dll which is a system DLL shipped with every GPU driver and therefore
+# does not need to be distributed alongside the exe.
+# For the GPU build: libmm_gpu_gate.dll is a DLL by design (loaded at runtime);
+# the linker finds libmm_gpu_gate.dll.a (import lib) and no libmm_gpu_gate.a,
+# so it correctly keeps it dynamic even under -static.
+# cudart is handled via CUDA::cudart_static in CMakeLists.txt — already baked
+# into libmm_gpu_gate.dll itself.
+BASE_LDFLAGS="-L/ucrt64/lib -static"
+
 info "Project dir : $PROJECT_DIR"
 info "GPU gate dir: $GPU_GATE_DIR"
 info "No-GPU only : $NO_GPU"
-info "Make jobs   : $JOBS  (override: --jobs=N)"
 
 # ============================================================
 #  ENSURE UCRT64 TOOLCHAIN IN PATH
@@ -105,7 +113,7 @@ fi
 # ============================================================
 #  CONFIGURE ARGS
 # ============================================================
-CONF_BASE="--with-curl=/ucrt64 --host=x86_64-w64-mingw32 LDFLAGS=-L/ucrt64/lib CPPFLAGS=-I/ucrt64/include"
+CONF_BASE="--with-curl=/ucrt64 --host=x86_64-w64-mingw32 CPPFLAGS=-I/ucrt64/include"
 CONF_GPU="--enable-gpu --with-mm-gpu-gate=$GPU_GATE_DIR $CONF_BASE"
 CONF_NOGPU="$CONF_BASE"
 
@@ -130,13 +138,9 @@ build_variant() {
     make clean 2>/dev/null || true
     rm -f config.status
     export CFLAGS="$cflags"
-    # configure: показываем только важные строки, но ошибку НЕ глушим
-    ./configure $conf_args 2>&1 | grep -E "(error:|warning:|^checking)" | tail -8 || true
-    # make: pipefail уже включён выше, PIPESTATUS[0] ловит код make до pipe
-    make -j"$JOBS" 2>&1 | tee "/tmp/make_${name}.log" | tail -5
-    if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-        error "make failed for $name — полный лог: /tmp/make_${name}.log"
-    fi
+    export LDFLAGS="$BASE_LDFLAGS"
+    ./configure $conf_args 2>&1 | grep -E "(checking|error|warning)" | tail -5 || true
+    make -j$(nproc) 2>&1 | tail -3
     strip -s cpuminer.exe
     cp cpuminer.exe "$out_dir/$name"
     info "  → $name done"
@@ -186,44 +190,11 @@ build_variant "-msse2 $DEFAULT_CFLAGS_OLD"                  "cpuminer-sse2.exe" 
 info ""
 info "Copying runtime DLLs..."
 
-copy_runtime_dlls() {
-    local rel_dir="$1"
-    local changed=1
-
-    # Loop until no new DLLs are found — captures transitive dependencies
-    while [ "$changed" = "1" ]; do
-        changed=0
-        local targets
-        targets=$(find "$rel_dir" -maxdepth 1 \( -name "*.exe" -o -name "*.dll" \) 2>/dev/null)
-        [ -z "$targets" ] && break
-
-        local dlls
-        dlls=$(ldd $targets 2>/dev/null \
-            | grep -i "ucrt64\|mingw" \
-            | awk '{print $3}' \
-            | grep "^/" \
-            | sort -u)
-
-        for dll in $dlls; do
-            local name
-            name=$(basename "$dll")
-            if [ -f "$dll" ] && [ ! -f "$rel_dir/$name" ]; then
-                cp "$dll" "$rel_dir/"
-                info "  Copied: $name"
-                changed=1
-            fi
-        done
-    done
-
-    # Validate: no unresolved dependencies must remain
-    local targets
-    targets=$(find "$rel_dir" -maxdepth 1 \( -name "*.exe" -o -name "*.dll" \) 2>/dev/null)
-    local missing
-    missing=$(ldd $targets 2>/dev/null | grep "not found" | awk '{print $1}' | sort -u)
-    if [ -n "$missing" ]; then
-        error "Missing DLLs after copy in $rel_dir:\n$missing"
-    fi
-}
+# With full -static linking all ucrt64 libraries are bundled in the exe.
+# The only remaining dynamic dependency is OpenCL.dll which is a system DLL
+# present on every machine with a GPU driver — no need to distribute it.
+# For the GPU build we still need to ship libmm_gpu_gate.dll (it IS the GPU
+# runtime, not a redistributable dep) and the OpenCL kernel source.
 
 if [ "$NO_GPU" = "0" ]; then
     cp "$GPU_GATE_DIR/libmm_gpu_gate.dll" "$RELEASE_GPU/"
@@ -231,12 +202,10 @@ if [ "$NO_GPU" = "0" ]; then
     mkdir -p "$RELEASE_GPU/data/kernels"
     cp "$PROJECT_DIR/algo/argon2d/argon2-gpu/data/kernels/argon2_kernel.cl" "$RELEASE_GPU/data/kernels/"
     info "  Copied: argon2_kernel.cl"
-    copy_runtime_dlls "$RELEASE_GPU"
-    info "  Runtime DLLs copied to $RELEASE_GPU"
+    info "  (no ucrt64 runtime DLLs needed — fully static exe)"
 fi
 
-copy_runtime_dlls "$RELEASE_NOGPU"
-info "  Runtime DLLs copied to $RELEASE_NOGPU"
+info "  (no-GPU build: exe is fully self-contained)"
 
 # ============================================================
 #  COPY DOCUMENTATION

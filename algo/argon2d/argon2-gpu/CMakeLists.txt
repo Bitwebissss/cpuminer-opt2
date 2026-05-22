@@ -107,7 +107,7 @@ if(HAVE_CUDA)
     )
     target_link_libraries(argon2-cuda
         PUBLIC  argon2-gpu-common
-        PRIVATE CUDA::cudart
+        PRIVATE CUDA::cudart_static
     )
 else()
     add_library(argon2-cuda STATIC
@@ -169,7 +169,13 @@ target_link_libraries(mm_gpu_gate
         OpenCL::OpenCL
 )
 if(HAVE_CUDA)
-    target_link_libraries(mm_gpu_gate PRIVATE CUDA::cudart)
+    target_link_libraries(mm_gpu_gate PRIVATE CUDA::cudart_static)
+    if(MSVC)
+        # cudart_static brings in LIBCMT (static CRT); the rest of the project
+        # uses /MD (MultiThreadedDLL).  /NODEFAULTLIB:LIBCMT resolves LNK4098
+        # by telling the linker to ignore the conflicting static CRT reference.
+        target_link_options(mm_gpu_gate PRIVATE /NODEFAULTLIB:LIBCMT)
+    endif()
 endif()
 
 # bat expects the output named libmm_gpu_gate.dll
