@@ -12,7 +12,7 @@
 #   bash build-windows-stage2.sh
 #
 # Builds: SSE2, AES+SSE4.2, AVX, AVX2, AVX2+SHA, AVX2+SHA+VAES, AVX512, AVX512+SHA+VAES
-# Output: cpuminer-windows-gpu.zip and/or cpuminer-windows-nogpu.zip in project root
+# Output: cpuminer-windows-gpu.zip (GPU) and/or cpuminer-windows.zip (no-GPU) in project root
 
 set -e
 
@@ -20,30 +20,29 @@ set -e
 #  QUICK TEST MODE (build only one variant)
 #  Set QUICK_TEST=1 and adjust QUICK_VARIANT if needed
 # ============================================================
-QUICK_TEST=0                # 0 = build all, 1 = build only one variant
-QUICK_VARIANT="cpuminer-sse2.exe"   # executable name to build when QUICK_TEST=1
+QUICK_TEST=0
+QUICK_VARIANT="cpuminer-sse2.exe"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+found() { echo -e "${CYAN}[FOUND]${NC} $*"; }
 
 # ============================================================
 #  RESOLVE PROJECT DIR
 # ============================================================
-# When called from bat: $1 is the unix-style project path (/c/cpuminer-opt3)
-# When called manually: auto-detect from script location
 if [ -n "$1" ] && [ "$1" != "--no-gpu" ]; then
     PROJECT_DIR="$1"
 else
     PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 
-# GPU gate directory (set by bat via CPUMINER_GPU_GATE_WIN env var, or default)
 if [ -n "$CPUMINER_GPU_GATE_WIN" ]; then
     GPU_GATE_DIR=$(cygpath -u "$CPUMINER_GPU_GATE_WIN")
 else
@@ -64,9 +63,7 @@ DEFAULT_CFLAGS_OLD="-O3 -Wall"
 info "Project dir : $PROJECT_DIR"
 info "GPU gate dir: $GPU_GATE_DIR"
 info "No-GPU only : $NO_GPU"
-if [ "$QUICK_TEST" = "1" ]; then
-    info "QUICK TEST MODE: will build only $QUICK_VARIANT and then package it"
-fi
+[ "$QUICK_TEST" = "1" ] && info "QUICK TEST MODE: building only $QUICK_VARIANT"
 
 # ============================================================
 #  ENSURE UCRT64 TOOLCHAIN IN PATH
@@ -102,11 +99,13 @@ fi
 info "Packages OK"
 
 # ============================================================
-#  VALIDATE GPU GATE (if GPU build requested)
+#  VALIDATE GPU GATE FILES EXIST BEFORE STARTING ANYTHING
 # ============================================================
 if [ "$NO_GPU" = "0" ]; then
     [ -f "$GPU_GATE_DIR/libmm_gpu_gate.dll" ]   || error "libmm_gpu_gate.dll not found in $GPU_GATE_DIR — run Stage 1 first"
     [ -f "$GPU_GATE_DIR/libmm_gpu_gate.dll.a" ] || error "libmm_gpu_gate.dll.a not found in $GPU_GATE_DIR — run Stage 1 first"
+    [ -f "$PROJECT_DIR/algo/argon2d/argon2-gpu/data/kernels/argon2_kernel.cl" ] \
+        || error "argon2_kernel.cl not found — check your source tree"
 fi
 
 # ============================================================
@@ -124,22 +123,112 @@ info "Running autogen.sh..."
 ./autogen.sh
 
 # ============================================================
-#  BUILD FUNCTION (with quick test support)
+#  verify_and_copy_dlls  REL_DIR
+#
+#  Called after EVERY exe build.
+#
+#  For each runtime DLL the current folder contents (exe+dll) need:
+#    - Already in REL_DIR → [FOUND] SKIP COPY  (guards against antivirus
+#      or manual deletion between builds — if it was there and now isn't,
+#      the ldd output will still list it and the copy branch below fires)
+#    - Not in REL_DIR, exists in toolchain → copy it, then re-scan
+#      (transitive deps: newly copied DLL may pull in more)
+#    - Not in REL_DIR, missing from toolchain → [ERROR] stop immediately
+#
+#  This means a DLL deleted mid-build (antivirus, etc.) is caught on the
+#  very next exe, not at packaging time.
 # ============================================================
-# Usage: build_variant "<cflags>" "<output_name>" "<conf_args>" "<out_dir>"
+verify_and_copy_dlls() {
+    local rel_dir="$1"
+    local changed=1
+
+    while [ "$changed" = "1" ]; do
+        changed=0
+
+        local targets
+        targets=$(find "$rel_dir" -maxdepth 1 \( -name "*.exe" -o -name "*.dll" \) 2>/dev/null)
+        [ -z "$targets" ] && break
+
+        local dlls
+        dlls=$(ldd $targets 2>/dev/null \
+            | grep -i "ucrt64\|mingw" \
+            | awk '{print $3}' \
+            | grep "^/" \
+            | sort -u)
+
+        for dll in $dlls; do
+            local dllname
+            dllname=$(basename "$dll")
+
+            if [ -f "$rel_dir/$dllname" ]; then
+                found "    $dllname — SKIP COPY"
+                continue
+            fi
+
+            # Not in release dir — must copy now or stop
+            [ -f "$dll" ] || error "Required DLL missing from toolchain: $dll — cannot continue"
+
+            cp "$dll" "$rel_dir/$dllname" \
+                || error "Copy failed: $dll → $rel_dir/ — cannot continue"
+            info "    Copied: $dllname"
+            changed=1   # re-scan: this DLL may have its own deps
+        done
+    done
+}
+
+# ============================================================
+#  verify_and_copy_gpu_files  REL_DIR
+#
+#  Called after EVERY GPU exe build (same fail-fast logic).
+#  GPU-specific files are not runtime DLLs so ldd won't find them —
+#  they are checked and copied explicitly here.
+# ============================================================
+verify_and_copy_gpu_files() {
+    local rel_dir="$1"
+
+    # libmm_gpu_gate.dll
+    if [ -f "$rel_dir/libmm_gpu_gate.dll" ]; then
+        found "    libmm_gpu_gate.dll — SKIP COPY"
+    else
+        cp "$GPU_GATE_DIR/libmm_gpu_gate.dll" "$rel_dir/" \
+            || error "Copy failed: libmm_gpu_gate.dll — cannot continue"
+        info "    Copied: libmm_gpu_gate.dll"
+    fi
+
+    # argon2_kernel.cl
+    local kernel_dst="$rel_dir/data/kernels"
+    mkdir -p "$kernel_dst"
+    if [ -f "$kernel_dst/argon2_kernel.cl" ]; then
+        found "    argon2_kernel.cl — SKIP COPY"
+    else
+        cp "$PROJECT_DIR/algo/argon2d/argon2-gpu/data/kernels/argon2_kernel.cl" "$kernel_dst/" \
+            || error "Copy failed: argon2_kernel.cl — cannot continue"
+        info "    Copied: data/kernels/argon2_kernel.cl"
+    fi
+}
+
+# ============================================================
+#  build_variant  CFLAGS  NAME  CONF_ARGS  OUT_DIR  [gpu]
+#
+#  1. Build the exe
+#  2. Immediately verify + copy runtime DLLs — stop on first failure
+#  3. If "gpu": verify + copy GPU-specific files — stop on first failure
+#  4. Only then return — next variant build can start
+# ============================================================
 build_variant() {
     local cflags="$1"
     local name="$2"
     local conf_args="$3"
     local out_dir="$4"
+    local extra="${5:-}"
 
-    # Skip if quick test mode and not the selected variant
     if [ "$QUICK_TEST" = "1" ] && [ "$name" != "$QUICK_VARIANT" ]; then
         info "  Skipping $name (quick test mode)"
         return 0
     fi
 
-    info "  Building $name..."
+    info ""
+    info "  ── Building $name ──"
     make clean 2>/dev/null || true
     rm -f config.status
     export CFLAGS="$cflags"
@@ -147,11 +236,21 @@ build_variant() {
     make -j$(nproc) 2>&1 | tail -3
     strip -s cpuminer.exe
     cp cpuminer.exe "$out_dir/$name"
-    info "  → $name done"
+    info "  ✓ $name compiled"
+
+    info "  Verifying runtime DLLs for $name..."
+    verify_and_copy_dlls "$out_dir"
+
+    if [ "$extra" = "gpu" ]; then
+        info "  Verifying GPU-specific files for $name..."
+        verify_and_copy_gpu_files "$out_dir"
+    fi
+
+    info "  ✓ $name — all dependencies OK, continuing"
 }
 
 # ============================================================
-#  BUILD GPU VARIANTS
+#  GPU VARIANTS
 # ============================================================
 if [ "$NO_GPU" = "0" ]; then
     info ""
@@ -160,18 +259,18 @@ if [ "$NO_GPU" = "0" ]; then
     info "========================================"
     mkdir -p "$RELEASE_GPU"
 
-    build_variant "-march=icelake-client $DEFAULT_CFLAGS"       "cpuminer-avx512-sha-vaes.exe" "$CONF_GPU" "$RELEASE_GPU"
-    build_variant "-march=skylake-avx512 $DEFAULT_CFLAGS"       "cpuminer-avx512.exe"          "$CONF_GPU" "$RELEASE_GPU"
-    build_variant "-mavx2 -msha -mvaes $DEFAULT_CFLAGS"         "cpuminer-avx2-sha-vaes.exe"   "$CONF_GPU" "$RELEASE_GPU"
-    build_variant "-march=znver1 $DEFAULT_CFLAGS"               "cpuminer-avx2-sha.exe"        "$CONF_GPU" "$RELEASE_GPU"
-    build_variant "-march=core-avx2 $DEFAULT_CFLAGS"            "cpuminer-avx2.exe"            "$CONF_GPU" "$RELEASE_GPU"
-    build_variant "-march=corei7-avx -maes $DEFAULT_CFLAGS_OLD" "cpuminer-avx.exe"             "$CONF_GPU" "$RELEASE_GPU"
-    build_variant "-march=westmere -maes $DEFAULT_CFLAGS_OLD"   "cpuminer-aes-sse42.exe"       "$CONF_GPU" "$RELEASE_GPU"
-    build_variant "-msse2 $DEFAULT_CFLAGS_OLD"                  "cpuminer-sse2.exe"            "$CONF_GPU" "$RELEASE_GPU"
+    build_variant "-march=icelake-client $DEFAULT_CFLAGS"       "cpuminer-avx512-sha-vaes.exe" "$CONF_GPU" "$RELEASE_GPU" "gpu"
+    build_variant "-march=skylake-avx512 $DEFAULT_CFLAGS"       "cpuminer-avx512.exe"          "$CONF_GPU" "$RELEASE_GPU" "gpu"
+    build_variant "-mavx2 -msha -mvaes $DEFAULT_CFLAGS"         "cpuminer-avx2-sha-vaes.exe"   "$CONF_GPU" "$RELEASE_GPU" "gpu"
+    build_variant "-march=znver1 $DEFAULT_CFLAGS"               "cpuminer-avx2-sha.exe"        "$CONF_GPU" "$RELEASE_GPU" "gpu"
+    build_variant "-march=core-avx2 $DEFAULT_CFLAGS"            "cpuminer-avx2.exe"            "$CONF_GPU" "$RELEASE_GPU" "gpu"
+    build_variant "-march=corei7-avx -maes $DEFAULT_CFLAGS_OLD" "cpuminer-avx.exe"             "$CONF_GPU" "$RELEASE_GPU" "gpu"
+    build_variant "-march=westmere -maes $DEFAULT_CFLAGS_OLD"   "cpuminer-aes-sse42.exe"       "$CONF_GPU" "$RELEASE_GPU" "gpu"
+    build_variant "-msse2 $DEFAULT_CFLAGS_OLD"                  "cpuminer-sse2.exe"            "$CONF_GPU" "$RELEASE_GPU" "gpu"
 fi
 
 # ============================================================
-#  BUILD NO-GPU VARIANTS
+#  NO-GPU VARIANTS
 # ============================================================
 info ""
 info "========================================"
@@ -189,60 +288,12 @@ build_variant "-march=westmere -maes $DEFAULT_CFLAGS_OLD"   "cpuminer-aes-sse42.
 build_variant "-msse2 $DEFAULT_CFLAGS_OLD"                  "cpuminer-sse2.exe"            "$CONF_NOGPU" "$RELEASE_NOGPU"
 
 # ============================================================
-#  COPY RUNTIME DLLs
-# ============================================================
-info ""
-info "Copying runtime DLLs..."
-
-copy_runtime_dlls() {
-    local rel_dir="$1"
-    local changed=1
-
-    # Loop until no new DLLs are found — captures transitive dependencies
-    while [ "$changed" = "1" ]; do
-        changed=0
-        local targets
-        targets=$(find "$rel_dir" -maxdepth 1 \( -name "*.exe" -o -name "*.dll" \) 2>/dev/null)
-        [ -z "$targets" ] && break
-
-        local dlls
-        dlls=$(ldd $targets 2>/dev/null \
-            | grep -i "ucrt64\|mingw" \
-            | awk '{print $3}' \
-            | grep "^/" \
-            | sort -u)
-
-        for dll in $dlls; do
-            local name
-            name=$(basename "$dll")
-            if [ -f "$dll" ] && [ ! -f "$rel_dir/$name" ]; then
-                cp "$dll" "$rel_dir/"
-                info "  Copied: $name"
-                changed=1
-            fi
-        done
-    done
-}
-
-if [ "$NO_GPU" = "0" ]; then
-    copy_runtime_dlls "$RELEASE_GPU"
-    # GPU-specific files
-    cp "$GPU_GATE_DIR/libmm_gpu_gate.dll" "$RELEASE_GPU/"
-    info "  Copied: libmm_gpu_gate.dll"
-    mkdir -p "$RELEASE_GPU/data/kernels"
-    cp "$PROJECT_DIR/algo/argon2d/argon2-gpu/data/kernels/argon2_kernel.cl" "$RELEASE_GPU/data/kernels/"
-    info "  Copied: argon2_kernel.cl"
-fi
-
-copy_runtime_dlls "$RELEASE_NOGPU"
-
-# ============================================================
-#  COPY DOCUMENTATION
+#  DOCUMENTATION
 # ============================================================
 info "Copying documentation..."
 for f in README.txt README.md RELEASE_NOTES verthash-help.txt; do
     if [ -f "$PROJECT_DIR/$f" ]; then
-        [ "$NO_GPU" = "0" ] && cp "$PROJECT_DIR/$f" "$RELEASE_GPU/"   || true
+        [ "$NO_GPU" = "0" ] && cp "$PROJECT_DIR/$f" "$RELEASE_GPU/"  || true
         cp "$PROJECT_DIR/$f" "$RELEASE_NOGPU/" || true
     fi
 done
@@ -252,25 +303,24 @@ done
 # ============================================================
 info "Generating SHA-256 hashes..."
 if [ "$NO_GPU" = "0" ]; then
-    (cd "$RELEASE_GPU"   && sha256sum * 2>/dev/null > hashes.txt || true)
+    (cd "$RELEASE_GPU"   && sha256sum *.exe *.dll 2>/dev/null > hashes.txt || true)
 fi
-(cd "$RELEASE_NOGPU" && sha256sum * 2>/dev/null > hashes.txt || true)
+(cd "$RELEASE_NOGPU" && sha256sum *.exe *.dll 2>/dev/null > hashes.txt || true)
 
 # ============================================================
-#  PACK ZIPS
+#  ZIP — contents of folder go directly into zip root (no subfolder)
 # ============================================================
 info "Creating zip archives..."
-cd "$PROJECT_DIR"
 
 if [ "$NO_GPU" = "0" ]; then
-    rm -f cpuminer-windows-gpu.zip
-    zip -r cpuminer-windows-gpu.zip release-windows/gpu/
+    rm -f "$PROJECT_DIR/cpuminer-windows-gpu.zip"
+    (cd "$RELEASE_GPU"   && zip -r "$PROJECT_DIR/cpuminer-windows-gpu.zip" .)
     info "  Created: cpuminer-windows-gpu.zip"
 fi
 
-rm -f cpuminer-windows-nogpu.zip
-zip -r cpuminer-windows-nogpu.zip release-windows/nogpu/
-info "  Created: cpuminer-windows-nogpu.zip"
+rm -f "$PROJECT_DIR/cpuminer-windows.zip"
+(cd "$RELEASE_NOGPU" && zip -r "$PROJECT_DIR/cpuminer-windows.zip" .)
+info "  Created: cpuminer-windows.zip"
 
 # ============================================================
 #  SUMMARY
@@ -279,7 +329,7 @@ info ""
 info "========================================"
 info "  Stage 2 complete."
 [ "$NO_GPU" = "0" ] && info "  GPU archive   : cpuminer-windows-gpu.zip"
-info "  No-GPU archive: cpuminer-windows-nogpu.zip"
+info "  No-GPU archive: cpuminer-windows.zip"
 info ""
 info "  CPU arch reference:"
 info "    avx512-sha-vaes  Intel Icelake, Rocketlake"

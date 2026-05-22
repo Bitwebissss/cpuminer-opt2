@@ -124,7 +124,7 @@ echo.
 echo ============================================================
 echo  BUILD COMPLETE
 echo  GPU archive:    cpuminer-windows-gpu.zip
-echo  No-GPU archive: cpuminer-windows-nogpu.zip
+echo  No-GPU archive: cpuminer-windows.zip
 echo ============================================================
 echo.
 pause
