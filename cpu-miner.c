@@ -2003,7 +2003,22 @@ void std_get_new_work( struct work* work, struct work* g_work, int thr_id,
      work_free( work );
      work_copy( work, g_work );
      *nonceptr = 0xffffffffU / opt_n_threads * thr_id;
+     // Standard margin protects against thread-boundary overshoot.
+     // For GPU batching: first_nonce + gpu_batch_size must not exceed UINT32_MAX,
+     // or the CUDA/OpenCL kernel produces corrupted nonces and the inner loop
+     // spins forever on wrap-around.  Subtract gpu_batch_size from each thread's
+     // end_nonce so scanhash is never called with a dangerous first_nonce.
+     // Loss: at most gpu_batch_size nonces out of ~4 billion = negligible.
+#ifdef USE_GPU
+     {
+         uint32_t safe_margin = 0x20;
+         if ( use_gpu != NULL && gpu_batch_size > 1 )
+             safe_margin += (uint32_t)gpu_batch_size;
+         *end_nonce_ptr = ( 0xffffffffU / opt_n_threads ) * (thr_id+1) - safe_margin;
+     }
+#else
      *end_nonce_ptr = ( 0xffffffffU / opt_n_threads ) * (thr_id+1) - 0x20;
+#endif
    }
    else
        ++(*nonceptr);

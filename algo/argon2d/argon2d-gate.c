@@ -268,6 +268,9 @@ int scanhash_argon2id1024_gpu( struct work *work, uint32_t max_nonce,
     uint32_t n = first_nonce;
     const bool bench = opt_benchmark;
 
+    /* Note: overflow guard removed — std_get_new_work in cpu-miner.c now
+     * subtracts gpu_batch_size from end_nonce so first_nonce can never
+     * reach the wrap-around zone.  No per-gate guard needed. */
     v128_bswap32_80( td->endiandata, pdata );
 
     do {
