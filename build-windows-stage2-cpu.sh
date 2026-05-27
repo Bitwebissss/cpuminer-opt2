@@ -162,7 +162,10 @@ build_variant() {
     # Full clean: wipes obj files, exe, Makefile, config.cache, config.status,
     # config.log — everything ./configure wrote. Prevents ANY bleed between
     # variants (different CPU arch flags, cached values).
-    make distclean 2>/dev/null || true
+    # The explicit rm is a safety net in case distclean is unavailable
+    # (no Makefile on first run, or distclean not defined in this autotools version).
+    make distclean >/dev/null 2>&1 || true
+    rm -f config.cache config.status config.log
 
     export CFLAGS="$cflags"
     ./configure $conf_args 2>&1 | grep -E "(checking|error|warning)" | tail -5 || true
