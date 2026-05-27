@@ -237,12 +237,17 @@ info "========================================"
 info "  Building GPU variants (8 CPU archs)"
 info "========================================"
 
-# Wipe release dir once before starting — ensures no stale exe/dll
+# Wipe release dir once before starting -- ensures no stale exe/dll
 # from a previous run (including an outdated libmm_gpu_gate.dll copy).
 info "Cleaning release dir: $RELEASE_GPU"
-rm -rf "$RELEASE_GPU"
-mkdir -p "$RELEASE_GPU"
-
+if [ -d "$RELEASE_GPU" ]; then
+    rm -rf "$RELEASE_GPU" || error "Failed to remove $RELEASE_GPU -- is a file locked?"
+    info "  Release dir removed OK"
+else
+    info "  Release dir did not exist -- nothing to clean"
+fi
+mkdir -p "$RELEASE_GPU" || error "Failed to create $RELEASE_GPU"
+info "  Release dir ready: $RELEASE_GPU"
 build_variant "-march=icelake-client $DEFAULT_CFLAGS"       "cpuminer-avx512-sha-vaes.exe" "$CONF_GPU" "$RELEASE_GPU"
 build_variant "-march=skylake-avx512 $DEFAULT_CFLAGS"       "cpuminer-avx512.exe"          "$CONF_GPU" "$RELEASE_GPU"
 build_variant "-mavx2 -msha -mvaes $DEFAULT_CFLAGS"         "cpuminer-avx2-sha-vaes.exe"   "$CONF_GPU" "$RELEASE_GPU"

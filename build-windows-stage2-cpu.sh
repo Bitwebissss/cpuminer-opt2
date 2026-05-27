@@ -188,12 +188,17 @@ info "========================================"
 info "  Building CPU-only variants (8 CPU archs)"
 info "========================================"
 
-# Wipe release dir once before starting — ensures no stale exe/dll
+# Wipe release dir once before starting -- ensures no stale exe/dll
 # from a previous run.
 info "Cleaning release dir: $RELEASE_NOGPU"
-rm -rf "$RELEASE_NOGPU"
-mkdir -p "$RELEASE_NOGPU"
-
+if [ -d "$RELEASE_NOGPU" ]; then
+    rm -rf "$RELEASE_NOGPU" || error "Failed to remove $RELEASE_NOGPU -- is a file locked?"
+    info "  Release dir removed OK"
+else
+    info "  Release dir did not exist -- nothing to clean"
+fi
+mkdir -p "$RELEASE_NOGPU" || error "Failed to create $RELEASE_NOGPU"
+info "  Release dir ready: $RELEASE_NOGPU"
 build_variant "-march=icelake-client $DEFAULT_CFLAGS"       "cpuminer-avx512-sha-vaes.exe" "$CONF_NOGPU" "$RELEASE_NOGPU"
 build_variant "-march=skylake-avx512 $DEFAULT_CFLAGS"       "cpuminer-avx512.exe"          "$CONF_NOGPU" "$RELEASE_NOGPU"
 build_variant "-mavx2 -msha -mvaes $DEFAULT_CFLAGS"         "cpuminer-avx2-sha-vaes.exe"   "$CONF_NOGPU" "$RELEASE_NOGPU"
